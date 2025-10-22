@@ -1,5 +1,3 @@
-# --- dice_game_screen.py (full) ---
-
 import os
 import json
 import random
@@ -219,12 +217,28 @@ class DiceGameScreen(Screen):
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
         mid = storage.get_current_match() if storage else None
-        self._online = bool(mid)
-        self.match_id = mid
-        if self._online:
-            self._start_online_sync()
-        else:
+
+        # Detect if it's actually a bot/offline game
+        player2 = self.player2_name.lower().strip() if self.player2_name else ""
+        bot_names = ["bot", "crazy boy", "kurfi", "sharp"]
+
+        if player2 in bot_names or (not mid):
+            # ✅ Force offline mode for bot play
+            self._online = False
+            self.match_id = None
+            if storage:
+                try:
+                    storage.set_current_match(None)  # clear any stale match
+                except Exception:
+                    pass
+            self._debug("[MODE] Bot/Offline mode forced (no server sync)")
             self._highlight_turn()
+        else:
+            # ✅ True online match
+            self._online = True
+            self.match_id = mid
+            self._debug(f"[MODE] Online match detected (ID={mid})")
+            self._start_online_sync()
 
     def on_leave(self, *_):
         self._stop_online_sync()
@@ -273,6 +287,17 @@ class DiceGameScreen(Screen):
         self._online = bool(match_id)
         self._resolve_my_index()
         self._reset_game_state()
+        # Ensure bot games never connect to server
+        if self.player2_name.lower().strip() in ["bot", "crazy boy", "kurfi", "sharp"]:
+            self._online = False
+            self.match_id = None
+            if storage:
+                try:
+                    storage.set_current_match(None)
+                except Exception:
+                    pass
+            self._debug("[INIT] Forcing offline mode for bot game")
+
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
         if self._online:
@@ -297,6 +322,7 @@ class DiceGameScreen(Screen):
 
     # ---------- turn ----------
     def _highlight_turn(self):
+        """Highlight active player and trigger bot move in offline mode."""
         p1_overlay = self.ids.get("p1_overlay")
         p2_overlay = self.ids.get("p2_overlay")
         p3_overlay = self.ids.get("p3_overlay")
@@ -317,24 +343,60 @@ class DiceGameScreen(Screen):
         pulse(p2_overlay, self._current_player == 1)
         pulse(p3_overlay, self._current_player == 2 and bool(self.player3_name))
 
-        # 🔹 Start 10s auto-turn timer in OFFLINE only
-        self._start_turn_timer()
+        # --- For offline mode: trigger bot turn automatically ---
+        if not self._online and self._current_player != 0:
+            self._debug(f"[BOT TURN] Player {self._current_player} auto-roll soon")
+            # Delay ensures dice_button exists and prevents double-trigger
+            Clock.schedule_once(lambda dt: self._auto_roll_current(), 0.3)
 
     # ---------- dice ----------
     def roll_dice(self):
-        """Request dice roll from backend (server authoritative)."""
-        if not self._game_active or not self._online or not self.match_id or not self._token():
+        """Roll dice for both online (server) and offline (bot) modes."""
+        if not self._game_active:
             return
 
-        # ✅ Prevent roll if not your turn
+        # --- Prevent multiple rolls per turn ---
+        if getattr(self, "_roll_locked", False):
+            self._debug("[ROLL] Turn already rolled — ignoring extra clicks.")
+            return
+        self._roll_locked = True
+
+        # --- OFFLINE / BOT MODE ---
+        if not self._online:
+            if self._current_player != 0:
+                self._debug("[TURN] Not your turn (bot playing).")
+                self._show_temp_popup("Not your turn!", duration=1.5)
+                self._roll_locked = False
+                return
+
+            roll = random.randint(1, 6)
+            self._debug(f"[BOT/OFFLINE] Player {self._current_player} rolled {roll}")
+
+            if "dice_button" in self.ids:
+                try:
+                    self.ids.dice_button.animate_spin(roll)
+                except Exception as e:
+                    self._debug(f"[BOT][DICE][ERR] {e}")
+
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
+            return
+
+        # --- ONLINE MODE ---
+        if not self.match_id or not self._token():
+            self._debug("[ROLL] Missing match_id or token — aborting online roll.")
+            self._roll_locked = False
+            return
+
         if self._current_player != self._my_index:
             self._debug("[TURN] Not your turn!")
-            self._show_temp_popup("⏳ Not your turn!", duration=1.5)
+            self._show_temp_popup("Not your turn!", duration=1.5)
+            self._roll_locked = False
             return
 
         if getattr(self, "_roll_inflight", False):
-            self._debug("[ROLL] Already waiting for server")
+            self._debug("[ROLL] Roll already in progress — ignored")
             return
+
         self._roll_inflight = True
 
         def worker():
@@ -343,23 +405,61 @@ class DiceGameScreen(Screen):
                     f"{self._backend()}/matches/roll",
                     headers={"Authorization": f"Bearer {self._token()}"},
                     json={"match_id": self.match_id},
-                    timeout=10,
-                    verify=False
+                    timeout=8,
+                    verify=False,
                 )
-
                 if resp.status_code == 200:
                     data = resp.json()
                     roll = int(data.get("roll") or 1)
                     Clock.schedule_once(lambda dt: self._animate_dice_and_apply_server(data, roll), 0)
-                elif resp.status_code == 409:  # backend says not your turn
+                elif resp.status_code == 409:
                     self._debug("[TURN] Server rejected roll — not your turn")
-                    Clock.schedule_once(lambda dt: self._show_temp_popup("⏳ Not your turn!", duration=1.5), 0)
+                    Clock.schedule_once(lambda dt: self._show_temp_popup("Not your turn!", duration=1.5), 0)
+                else:
+                    # Handle stuck state gracefully
+                    if "Match not active" in resp.text:
+                        Clock.schedule_once(lambda dt: self._safe_turn_recover(), 0.2)
+                    self._debug(f"[ROLL][HTTP] Ignored {resp.status_code}: {resp.text}")
             except Exception as e:
                 self._debug(f"[ROLL][ERR] {e}")
             finally:
-                self._roll_inflight = False
+                Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0.2)
+                Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0.2)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _safe_turn_recover(self):
+        """Recover if match stuck in 'not your turn' after spawn."""
+        if not self._game_active:
+            return
+        self._debug("[TURN][RECOVER] Advancing turn manually after stuck spawn.")
+        self._roll_locked = False
+        self._roll_inflight = False
+        self._current_player = (self._current_player + 1) % self._num_players
+        self._highlight_turn()
+
+    def _offline_roll_action(self):
+        """Perform offline dice roll with animation and movement."""
+        if getattr(self, "_roll_locked", False):
+            self._debug("[ROLL] Turn already rolled — ignoring duplicate offline roll.")
+            return
+        self._roll_locked = True
+
+        roll = random.randint(1, 6)
+        self._debug(f"[OFFLINE MODE] Player {self._current_player} rolled {roll}")
+
+        if "dice_button" in self.ids:
+            try:
+                self.ids.dice_button.animate_spin(roll)
+            except Exception as e:
+                self._debug(f"[DICE][ERR] {e}")
+
+        # Apply roll after animation delay (0.8s)
+        Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
+
+        # Reset roll flag safely (for next turn)
+        Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 1.0)
+        Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 1.0)
 
     # ---------- helper popup ----------
     def _show_temp_popup(self, msg: str, duration: float = 1.5):
@@ -468,7 +568,10 @@ class DiceGameScreen(Screen):
 
     # ---------- roll logic (OFFLINE) ----------
     def _apply_roll(self, roll: int):
-        """Offline dice roll logic. Server handles this in online mode."""
+        """
+        Offline dice roll logic — perfectly mirrors backend.
+        Handles spawn (1), reverse at 3, overshoot (>7 stays), and win (==7).
+        """
         if self._online:
             self._debug("[SKIP] Online mode active — backend handles dice roll.")
             return
@@ -481,7 +584,7 @@ class DiceGameScreen(Screen):
 
         self._debug(f"[OFFLINE] Player {p} rolled {roll} (from {old})")
 
-        # spawn only on 1
+        # --- Rule 1: Spawn only when rolling 1 ---
         if not self._spawned_on_board[p]:
             if roll == 1:
                 self._spawned_on_board[p] = True
@@ -489,45 +592,67 @@ class DiceGameScreen(Screen):
                 self._move_coin_to_box(p, 0)
                 self._debug(f"[SPAWN] Player {p} enters board at box 0")
             else:
-                self._positions[p] = 0
                 self._debug(f"[SKIP] Player {p} not spawned (roll={roll})")
-            self._end_turn_and_highlight()
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.5)
             return
 
-        # reverse at 3
+        # --- Rule 2: Reverse (danger box 3) ---
         if new_pos == DANGER_BOX:
             self._debug(f"[DANGER] Player {p} hit box {DANGER_BOX} → reset to start")
             self._positions[p] = 0
             self._move_coin_to_box(p, DANGER_BOX)
-            Clock.schedule_once(lambda dt: self._move_coin_to_box(p, 0, reverse=True), 0.5)
-            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
+
+            # ✅ Important: prevent false win during animation
+            self._game_active = False  # temporarily pause game flow
+
+            def do_reverse_reset(*_):
+                self._move_coin_to_box(p, 0, reverse=True)
+                self._debug(f"[RESET] Player {p} safely returned to start")
+                self._game_active = True
+                self._end_turn_and_highlight()
+
+            Clock.schedule_once(do_reverse_reset, 0.8)
             return
 
-        # exact win
+        # --- Rule 3: Exact win (==7) ---
         if new_pos == BOARD_MAX:
             self._positions[p] = BOARD_MAX
             self._move_coin_to_box(p, BOARD_MAX)
             self._declare_winner(p)
             return
 
-        # overshoot
+        # --- Rule 4: Overshoot (>7) → stay ---
         if new_pos > BOARD_MAX:
             self._debug(f"[OVERSHOOT] Player {p} rolled {roll} → stays at {old}")
             self._positions[p] = old
             self._move_coin_to_box(p, old)
-            self._end_turn_and_highlight()
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.5)
             return
 
-        # normal move
+        # --- Rule 5: Normal move ---
         self._positions[p] = new_pos
         self._move_coin_to_box(p, new_pos)
         self._debug(f"[MOVE] Player {p} moved to box {new_pos}")
-
-        self._end_turn_and_highlight()
+        Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
 
     def _end_turn_and_highlight(self):
+        """Safely advance to the next turn and trigger proper highlight/bot roll."""
+        if getattr(self, "_end_turn_pending", False):
+            self._debug("[TURN] End-turn already pending — skipping duplicate call.")
+            return
+        self._end_turn_pending = True
+
+        self._roll_locked = False
         self._current_player = (self._current_player + 1) % self._num_players
-        self._highlight_turn()
+        self._debug(f"[TURN] Switching to player {self._current_player}")
+
+        def finish_turn(*_):
+            self._end_turn_pending = False
+            self._highlight_turn()
+            # Always start a new timer for whoever’s next
+            self._start_turn_timer()
+
+        Clock.schedule_once(finish_turn, 0.3)
 
     # ---------- victory ----------
     def _declare_winner(self, winner_idx: int):
@@ -646,21 +771,30 @@ class DiceGameScreen(Screen):
     # ---------- Turn timer (Auto-Pass & Auto-Roll) ----------
     def _start_turn_timer(self):
         """
-        Start a 10-second timer for each turn.
-        - In ONLINE mode → auto-pass to next player if inactive.
-        - In OFFLINE mode → auto-roll dice for inactive player.
+        Start a timer for each turn.
+        - ONLINE: auto-pass after 10s of inactivity.
+        - OFFLINE:
+            • Player 0 (real human) → auto-roll in 10s if idle.
+            • Bot players (index > 0) → handled by _auto_roll_current().
         """
         self._cancel_turn_timer()
         if not self._game_active:
             return
 
-        self._debug(f"[TIMER] Started 10s timer for player {self._current_player}")
+        current = self._current_player
+
         if self._online:
-            # Auto-pass to next player after 10s of inactivity
+            self._debug(f"[TIMER] Started 10s timer for player {current} (online)")
             self._turn_timer = Clock.schedule_once(lambda dt: self._auto_pass_turn(), 10)
+            return
+
+        # --- OFFLINE MODE ---
+        if current == 0:
+            self._debug("[TIMER] Real player idle → auto-roll in 10s")
+            self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
         else:
-            # Offline: auto-roll the dice after 10s
-            self._turn_timer = Clock.schedule_once(lambda dt: self._auto_roll_current(), 10)
+            self._debug(f"[BOT TIMER] Player {current} will auto-roll soon (via _auto_roll_current)")
+            self._turn_timer = Clock.schedule_once(lambda dt: self._auto_roll_current(), 0)
 
     def _cancel_turn_timer(self):
         """Cancel any active turn timer."""
@@ -672,16 +806,50 @@ class DiceGameScreen(Screen):
             self._turn_timer = None
 
     def _auto_roll_current(self):
-        """Auto-roll if player doesn't act within 10s (OFFLINE mode only)."""
+        """Auto-roll for bot/offline players with natural delay and animation."""
         if self._online or not self._game_active:
             return
-        self._debug(f"[AUTO] 10s timeout → auto roll for player {self._current_player}")
-        try:
+
+        # ✅ Prevent overlapping or duplicate bot rolls
+        if getattr(self, "_bot_rolling", False):
+            self._debug("[BOT] Already rolling — skip duplicate auto-roll.")
+            return
+        self._bot_rolling = True
+
+        current = self._current_player
+        delay = random.uniform(1.2, 4.0)
+        self._debug(f"[BOT TURN] Player {current} will roll in {delay:.1f}s")
+
+        def do_roll(*_):
+            if not self._game_active or self._online:
+                self._bot_rolling = False
+                return
+
             roll = random.randint(1, 6)
-            self._debug(f"[AUTO] Offline auto roll = {roll}")
-            self._apply_roll(roll)
-        except Exception as e:
-            self._debug(f"[AUTO][ERR] {e}")
+            self._debug(f"[BOT TURN] Player {current} rolled {roll}")
+
+            # ---- Animate dice ----
+            try:
+                if "dice_button" in self.ids and self.ids.dice_button:
+                    self.ids.dice_button.animate_spin(roll)
+                else:
+                    self._debug("[BOT][WARN] dice_button not ready yet.")
+            except Exception as e:
+                self._debug(f"[BOT][DICE][ERR] {e}")
+
+            # ---- Apply roll after spin delay (so movement matches dice animation) ----
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
+
+            # ---- Safely clear bot flag after roll completes ----
+            def _clear_flag_and_check():
+                self._bot_rolling = False
+                if self._game_active:
+                    self._debug(f"[BOT TURN] Player {current} finished roll.")
+
+            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 1.5)
+
+        # Schedule the roll after a natural reaction delay
+        Clock.schedule_once(do_roll, delay)
 
     def _auto_pass_turn(self):
         """Auto-pass turn to next player after 10 seconds (ONLINE mode)."""
@@ -817,6 +985,18 @@ class DiceGameScreen(Screen):
                 self._debug(f"[SPAWN] Player {actor} enters board at 0")
                 self._move_coin_to_box(actor, 0)
                 self._spawned_on_board[actor] = True
+
+                # ✅ FIX: update local turn immediately from payload
+                if turn is not None:
+                    try:
+                        self._current_player = int(turn)
+                        self._debug(f"[TURN][SYNC] Turn set from payload: {self._current_player}")
+                    except Exception:
+                        self._debug("[TURN][SYNC] Invalid turn value in payload")
+
+                self._roll_locked = False
+                self._roll_inflight = False
+                self._highlight_turn()
                 return
 
             # --- Reverse ---
@@ -873,8 +1053,12 @@ class DiceGameScreen(Screen):
             if turn is not None:
                 try:
                     self._current_player = int(turn)
-                except Exception:
-                    pass
+                    self._debug(f"[TURN][SYNC] Updated from server: {self._current_player}")
+                except Exception as e:
+                    self._debug(f"[TURN][SYNC][ERR] {e}")
+            else:
+                self._debug("[TURN][SYNC] No turn info in payload, keeping previous value.")
+
             self._highlight_turn()
 
         except Exception as e:
