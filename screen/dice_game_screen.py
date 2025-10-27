@@ -270,10 +270,13 @@ class DiceGameScreen(Screen):
     def _apply_initial_portraits(self):
         pids = storage.get_player_ids() if storage else [None, None, None]
         names = [self.player1_name, self.player2_name, self.player3_name]
+
         if "p1_pic" in self.ids:
             self.ids.p1_pic.source = self._resolve_avatar_source(0, names[0], pids[0])
+
         if "p2_pic" in self.ids:
             self.ids.p2_pic.source = self._resolve_avatar_source(1, names[1], pids[1])
+
         if self.player3_name and "p3_pic" in self.ids:
             self.ids.p3_pic.source = self._resolve_avatar_source(2, names[2], pids[2])
 
@@ -752,54 +755,53 @@ class DiceGameScreen(Screen):
 
     # ---------- forfeit ----------
     def force_player_exit(self):
-        """Handle Give Up — notify backend + close both clients cleanly."""
+        """Handle Give Up — cleanly notify backend and prevent duplicate calls."""
+        # 🛡 Prevent duplicate triggers for a few seconds
+        if getattr(self, "_forfeit_lock", False):
+            self._debug("[FORFEIT] Click ignored (lock active).")
+            return
+        self._forfeit_lock = True
+        Clock.schedule_once(lambda dt: setattr(self, "_forfeit_lock", False), 3.0)
+
+        self._debug("[FORFEIT] Give Up pressed.")
         self._game_active = False
+
         backend, token, match_id = self._backend(), self._token(), self.match_id
+
+        # Offline fallback (no match id)
         if not (backend and token and match_id):
             self._show_forfeit_popup("You gave up! Opponent wins.")
+            Clock.schedule_once(lambda dt: self._reset_after_popup(), 2.5)
             return
-
-        my_index = self._my_index  # Track who gave up
 
         def worker():
             try:
+                self._debug(f"[FORFEIT] Sending request to backend for match {match_id}")
                 resp = requests.post(
                     f"{backend}/matches/forfeit",
                     headers={"Authorization": f"Bearer {token}"},
-                    json={"match_id": match_id, "actor": my_index},
+                    json={"match_id": match_id},
                     timeout=10,
                     verify=False,
                 )
                 data = resp.json() if resp.status_code == 200 else {}
+
+                # Handle “already finished” gracefully
+                if resp.status_code == 400 and "already finished" in resp.text.lower():
+                    self._debug("[FORFEIT] Match already finished — skipping.")
+                    Clock.schedule_once(lambda dt: self._reset_after_popup(), 1.5)
+                    return
+
                 winner = data.get("winner_name", "Opponent")
-
-                # --- Notify other clients (WebSocket broadcast) ---
-                try:
-                    notify = {
-                        "forfeit": True,
-                        "match_id": match_id,
-                        "actor": my_index,  # 👈 tell who gave up
-                        "winner": data.get("winner"),
-                        "winner_name": winner,
-                    }
-                    requests.post(
-                        f"{backend}/matches/check",
-                        headers={"Authorization": f"Bearer {token}"},
-                        json=notify,
-                        timeout=5,
-                        verify=False,
-                    )
-                except Exception:
-                    pass
-
-                # --- Local popup for the quitter ---
-                Clock.schedule_once(lambda dt: self._show_forfeit_popup("You gave up! Opponent wins."), 0)
-                Clock.schedule_once(lambda dt: self._reset_after_popup(), 3.0)
+                Clock.schedule_once(lambda dt:
+                                    self._show_forfeit_popup(f"You gave up! {winner} wins."), 0)
+                Clock.schedule_once(lambda dt: self._reset_after_popup(), 2.5)
 
             except Exception as e:
                 self._debug(f"[FORFEIT][ERR] {e}")
-                Clock.schedule_once(lambda dt: self._show_forfeit_popup("You gave up! Opponent wins."), 0)
-                Clock.schedule_once(lambda dt: self._reset_after_popup(), 3.0)
+                Clock.schedule_once(lambda dt:
+                                    self._show_forfeit_popup("You gave up! Opponent wins."), 0)
+                Clock.schedule_once(lambda dt: self._reset_after_popup(), 2.5)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -827,6 +829,12 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(close_popup_and_reset, 2.5)
 
+    def _reset_after_popup(self, *_):
+        self._stop_online_sync()
+        self._game_active = False
+        self._winner_shown = False
+        if self.manager:
+            self.manager.current = "stage"
     # ---------- Turn timer (Auto-Pass & Auto-Roll) ----------
     def _start_turn_timer(self):
         """
@@ -1106,11 +1114,12 @@ class DiceGameScreen(Screen):
                 self._debug(f"[OVERSHOOT] Player {actor} no valid move (roll={roll})")
 
             # --- Handle victory ---
-            if winner is not None:
+            if winner is not None and not forfeit_flag:
+                self._debug(f"[WINNER] Player {winner} declared winner (normal finish)")
                 Clock.schedule_once(lambda dt: self._declare_winner(int(winner)), 0.8)
                 return
 
-            # --- Handle forfeit / finish properly ---
+            # --- Handle forfeit / finish ---
             if forfeit_flag or finished:
                 # show correct popup depending on who forfeited
                 if winner == self._my_index:
