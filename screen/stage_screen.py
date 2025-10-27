@@ -33,12 +33,14 @@ class StageScreen(Screen):
     def _current_player_name(self) -> str:
         if storage:
             user = storage.get_user() or {}
+            # ✅ Always prefer the full name from backend
             if user.get("name"):
                 return user["name"].strip()
-            if user.get("email"):
-                return user["email"].split("@", 1)[0]
-            if user.get("profile_image"):
-                self.profile_image = user["profile_image"]
+            # If full name missing but phone exists, use that
+            if user.get("phone"):
+                return user["phone"]
+            # Fallback only if both missing
+            return "Player"
         return "You"
 
     def on_pre_enter(self, *_):
@@ -51,6 +53,8 @@ class StageScreen(Screen):
         if pic:
             pic.source = self.profile_image
         self._load_stakes_from_backend()
+
+        # 🧹 auto abandon unfinished match if needed
         token = storage.get_token() if storage else None
         backend = storage.get_backend_url() if storage else None
         if token and backend:
@@ -101,9 +105,6 @@ class StageScreen(Screen):
         threading.Thread(target=worker, daemon=True).start()
 
     def _populate_stages(self, stages_box, stakes):
-        from kivy.uix.button import Button
-        from kivy.graphics import Color, RoundedRectangle
-
         self._stage_buttons = []
         btn_width = self._scale(220)
         btn_height = self._scale(50)
@@ -145,7 +146,6 @@ class StageScreen(Screen):
         stages_box.add_widget(btn_settings)
 
     def _highlight_selected(self, selected_btn):
-        from kivy.graphics import Color, RoundedRectangle
         for btn in self._stage_buttons:
             btn.canvas.before.clear()
             with btn.canvas.before:
@@ -162,6 +162,7 @@ class StageScreen(Screen):
         backend = storage.get_backend_url() if storage else None
         if not (token and backend):
             return
+
         def worker():
             try:
                 resp = requests.get(
@@ -174,7 +175,12 @@ class StageScreen(Screen):
                     data = resp.json()
                     storage.set_user(data)
                     balance = data.get("wallet_balance", 0)
-                    name = data.get("name") or data.get("email", "Player")
+
+                    # ✅ FIXED: Always prefer full name from DB
+                    name = (data.get("name") or "").strip()
+                    if not name:
+                        name = data.get("phone") or "Player"
+
                     pic_url = data.get("profile_image") or "assets/default.png"
                     self.profile_image = pic_url
                     Clock.schedule_once(lambda dt: self._update_wallet_label(balance), 0)
@@ -182,6 +188,7 @@ class StageScreen(Screen):
                     Clock.schedule_once(lambda dt: self._update_profile_pic(pic_url), 0)
             except Exception as e:
                 print(f"[ERR] Wallet fetch failed: {e}")
+
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_wallet_label(self, balance: float):
