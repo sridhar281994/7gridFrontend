@@ -287,11 +287,23 @@ class DiceGameScreen(Screen):
     # ---------- state ----------
     def _reset_game_state(self):
         """Reset local positions and flags; used mainly for offline/bot games."""
+        self._cancel_turn_timer()
         self._positions = [0, 0, 0]
         self._spawned_on_board = [False, False, False]
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._bot_rolling = False
+        self._end_turn_pending = False
+        self._auto_from_timer = False
+        self._first_turn_synced = False
+        self._last_roll_time = 0
+        self._last_state_sig = None
+        self._last_roll_seen = None
+        self._last_roll_animated = None
+        self._forfeited_players = set()
 
         forfeited = getattr(self, "_forfeited_players", set())
         active_players = [i for i in range(self._num_players) if i not in forfeited]
