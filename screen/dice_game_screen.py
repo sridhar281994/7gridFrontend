@@ -432,6 +432,9 @@ class DiceGameScreen(Screen):
         if not self._game_active:
             return
 
+        # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
+        self._cancel_turn_timer()
+
         now = time.time()
         if hasattr(self, "_last_roll_time") and now - getattr(self, "_last_roll_time", 0) < 1.5:
             self._debug("[ROLL] Ignoring duplicate roll trigger within 1.5s window.")
@@ -1225,6 +1228,10 @@ class DiceGameScreen(Screen):
 
     def _auto_roll_real_online(self):
         if not self._online or not self._game_active:
+            return
+
+        if getattr(self, "_roll_inflight", False):
+            self._debug("[AUTO-ROLL] Aborted — roll already in flight.")
             return
 
         forfeited = getattr(self, "_forfeited_players", set())
