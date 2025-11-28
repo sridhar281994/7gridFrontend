@@ -345,11 +345,15 @@ class DiceGameScreen(Screen):
             self._game_active = False
             return
 
-        # start turn randomly among available players for each new game
-        try:
-            self._current_player = random.choice(active_players)
-        except Exception:
-            self._current_player = active_players[0]
+        # start turn handling
+        if self._online:
+            self._current_player = -1  # wait for backend sync
+            self._set_dice_button_enabled(False)
+        else:
+            try:
+                self._current_player = random.choice(active_players)
+            except Exception:
+                self._current_player = active_players[0]
         self._place_coins_near_portraits()
         self._highlight_turn()
 
@@ -479,6 +483,7 @@ class DiceGameScreen(Screen):
 
         if self._online:
             self._debug(f"[TURN][UI] Online turn highlight for player {self._current_player}")
+            self._set_dice_button_enabled(self._current_player == self._my_index and self._current_player >= 0)
             return
 
         # offline
@@ -971,6 +976,8 @@ class DiceGameScreen(Screen):
             self._ws_thread.start()
         else:
             self._poll_ev = Clock.schedule_interval(lambda dt: self._poll_state_once(), 0.9)
+        # ensure we have the latest state immediately
+        self._sync_remote_turn("start-sync")
 
     def _stop_online_sync(self):
         if self._ws:
