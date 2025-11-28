@@ -121,6 +121,16 @@ Factory.register("PolygonDice", cls=PolygonDice)
 # Dice Game Screen
 # ------------------------
 class DiceGameScreen(Screen):
+    def sync_initial_turn(self, turn):
+        try:
+            self._current_player = int(turn)
+            self._server_turn = int(turn)
+        except Exception:
+            self._current_player = 0
+        self._roll_inflight = False
+        self._last_roll_time = 0
+        self._highlight_turn()
+
     dice_result = StringProperty("")
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
@@ -158,6 +168,7 @@ class DiceGameScreen(Screen):
         self._first_turn_synced = False
         self._auto_from_timer = False
         self._last_roll_time = 0
+        self._server_turn = None
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -230,6 +241,7 @@ class DiceGameScreen(Screen):
         self._roll_locked = False
         self._roll_source = None
         self._set_dice_button_enabled(True)
+        self._highlight_turn()
 
     # ---------- lifecycle ----------
     def on_pre_enter(self, *_):

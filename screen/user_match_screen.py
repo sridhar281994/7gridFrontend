@@ -264,15 +264,15 @@ class UserMatchScreen(Screen):
             self._poll_event = None
 
         data = getattr(self, "_last_poll_data", {}) or {}
-        ids_from_payload = data.get("player_ids")
         if isinstance(ids_or_turn, list):
             pids = ids_or_turn
         else:
+            ids_from_payload = data.get("player_ids")
             if isinstance(ids_from_payload, (list, tuple)):
                 pids = list(ids_from_payload)
             else:
                 pids = [data.get("p1_id"), data.get("p2_id"), data.get("p3_id")]
-            turn = ids_or_turn
+            turn = int(ids_or_turn) if ids_or_turn is not None else int(data.get("turn") or 0)
 
         game = self.manager.get_screen("dicegame")
         if self.selected_mode == 2:
@@ -292,6 +292,11 @@ class UserMatchScreen(Screen):
 
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
         self.manager.current = "dicegame"
+
+        if hasattr(storage, "set_initial_turn"):
+            storage.set_initial_turn(int(turn))
+        if hasattr(game, "sync_initial_turn"):
+            Clock.schedule_once(lambda dt: game.sync_initial_turn(turn), 0.2)
 
     # -------------------------
     # Poll match ready
