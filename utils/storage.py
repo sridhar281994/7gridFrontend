@@ -142,3 +142,17 @@ def clear_all():
     _state["backend_url"] = "https://spin-api-pba3.onrender.com"
     _state["my_player_index"] = None
     _state["num_players"] = 2
+
+# ----------------------------------------------------
+# Stakes Cache (for ROBOTS Army detection)
+# ----------------------------------------------------
+_stakes_cache = []
+
+def set_stakes_cache(stakes):
+    """Store stakes list so front-end screens can detect ROBOTS Army stage."""
+    global _stakes_cache
+    _stakes_cache = stakes or []
+
+def get_stakes_cache():
+    """Return last cached stakes list."""
+    return _stakes_cache
