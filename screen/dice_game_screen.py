@@ -241,6 +241,18 @@ class DiceGameScreen(Screen):
         self._roll_locked = False
         self._roll_source = None
         self._set_dice_button_enabled(True)
+
+    def _mark_roll_start(self, source: str = "manual"):
+        self._roll_inflight = True
+        self._roll_locked = True
+        self._roll_source = source
+        self._set_dice_button_enabled(False)
+
+    def _mark_roll_end(self):
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._roll_source = None
+        self._set_dice_button_enabled(True)
         self._highlight_turn()
 
     # ---------- lifecycle ----------
@@ -431,38 +443,28 @@ class DiceGameScreen(Screen):
         if fallback_idx is not None and storage:
             storage.set_my_player_index(fallback_idx)
 
+    def _resolve_index_from_ids(self, ids):
+        if not storage or not isinstance(ids, (list, tuple)):
+            return None
+        uid = (storage.get_user() or {}).get("id")
+        if uid is None:
+            return None
+        for idx, pid in enumerate(ids):
+            if pid is not None and str(pid) == str(uid):
+                return idx
+        return None
+
     def _maybe_update_my_index_from_payload(self, payload, trusted: bool = False):
-        """Try to refresh my_index based on server payload."""
         if not payload:
             return False
-
-        idx = None
-        my_uid = None
-        if storage:
-            user = storage.get_user() or {}
-            my_uid = user.get("id") or user.get("_id")
-
-        candidates = payload.get("player_ids") or payload.get("players_ids") or payload.get("ids")
-        if my_uid is not None and isinstance(candidates, (list, tuple)):
-            for i, pid in enumerate(candidates):
-                if pid is not None and str(pid) == str(my_uid):
-                    idx = i
-                    break
-
-        if idx is None and trusted:
-            for key in ("player_index", "player_idx", "my_index", "self_index"):
-                if key in payload and payload.get(key) is not None:
-                    idx = payload.get(key)
-                    break
-
+        idx = self._resolve_index_from_ids(payload.get("player_ids"))
+        if idx is None and trusted and payload.get("player_index") is not None:
+            try:
+                idx = int(payload.get("player_index"))
+            except (TypeError, ValueError):
+                idx = None
         if idx is None:
             return False
-
-        try:
-            idx = int(idx)
-        except (TypeError, ValueError):
-            return False
-
         self._my_index = idx
         if storage:
             storage.set_my_player_index(idx)
@@ -1165,6 +1167,11 @@ class DiceGameScreen(Screen):
             roll = payload.get("last_roll")
             actor = payload.get("actor")
             turn = payload.get("turn")
+            if turn is not None:
+                try:
+                    self._server_turn = int(turn)
+                except Exception:
+                    pass
             spawn = payload.get("spawn", False)
             forfeit_actor = payload.get("forfeit_actor")
 
