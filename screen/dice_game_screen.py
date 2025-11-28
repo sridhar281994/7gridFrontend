@@ -418,7 +418,7 @@ class DiceGameScreen(Screen):
         if fallback_idx is not None and storage:
             storage.set_my_player_index(fallback_idx)
 
-    def _maybe_update_my_index_from_payload(self, payload):
+    def _maybe_update_my_index_from_payload(self, payload, trusted: bool = False):
         """Try to refresh my_index based on server payload."""
         if not payload:
             return False
@@ -436,8 +436,7 @@ class DiceGameScreen(Screen):
                     idx = i
                     break
 
-        # Only fall back to explicit player_index if ids were unavailable.
-        if idx is None:
+        if idx is None and trusted:
             for key in ("player_index", "player_idx", "my_index", "self_index"):
                 if key in payload and payload.get(key) is not None:
                     idx = payload.get(key)
@@ -572,7 +571,7 @@ class DiceGameScreen(Screen):
             )
             if resp.status_code == 200:
                 data = resp.json()
-                self._maybe_update_my_index_from_payload(data)
+                self._maybe_update_my_index_from_payload(data, trusted=True)
                 srv_turn = data.get("turn")
                 if srv_turn is not None:
                     self._current_player = int(srv_turn)
@@ -1002,7 +1001,7 @@ class DiceGameScreen(Screen):
         else:
             self._poll_ev = Clock.schedule_interval(lambda dt: self._poll_state_once(), 0.9)
         # ensure we have the latest state immediately
-        self._sync_remote_turn("start-sync")
+        self._sync_remote_turn("start-sync", trusted=True)
 
     def _stop_online_sync(self):
         if self._ws:
@@ -1057,7 +1056,7 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[POLL][ERR] {e}")
 
-    def _sync_remote_turn(self, reason: str = ""):
+    def _sync_remote_turn(self, reason: str = "", trusted: bool = False):
         """Force-refresh state from backend (used after 409 or manual resync)."""
         if not self._online or not self.match_id or not self._token():
             return
@@ -1075,7 +1074,7 @@ class DiceGameScreen(Screen):
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    self._maybe_update_my_index_from_payload(data)
+                    self._maybe_update_my_index_from_payload(data, trusted=trusted)
                     Clock.schedule_once(lambda dt: self._on_server_event(data), 0)
             except Exception as e:
                 self._debug(f"[SYNC][REFRESH][ERR] {e}")
@@ -1387,7 +1386,7 @@ class DiceGameScreen(Screen):
                 return
 
             data = resp.json()
-            self._maybe_update_my_index_from_payload(data)
+            self._maybe_update_my_index_from_payload(data, trusted=True)
             srv_turn = int(data.get("turn", -1))
             if srv_turn != self._my_index or srv_turn in forfeited:
                 self._debug(
@@ -1400,14 +1399,7 @@ class DiceGameScreen(Screen):
 
         self._debug(f"[AUTO-ROLL] confirmed auto-roll for player {self._my_index}")
         self._auto_from_timer = True
-        try:
-            if "dice_button" in self.ids:
-                dummy = random.randint(1, 6)
-                self.ids.dice_button.animate_spin(dummy)
-        except Exception:
-            pass
-
-        Clock.schedule_once(lambda dt: self.roll_dice(), 0.5)
+        Clock.schedule_once(lambda dt: self.roll_dice(), 0.1)
 
     def _cancel_turn_timer(self):
         if hasattr(self, "_turn_timer") and self._turn_timer:
