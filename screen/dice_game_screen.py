@@ -211,6 +211,7 @@ class DiceGameScreen(Screen):
     def _set_dice_button_enabled(self, enabled: bool):
         btn = self.ids.get("dice_button")
         if not btn:
+            Clock.schedule_once(lambda dt: self._set_dice_button_enabled(enabled), 0.1)
             return
         try:
             btn.disabled = not enabled
@@ -578,6 +579,7 @@ class DiceGameScreen(Screen):
                 if self._current_player != self._my_index:
                     self._debug("[ROLL] Aborted — backend reports different turn.")
                     self._mark_roll_end()
+                    self._set_dice_button_enabled(False)
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
                     return
@@ -599,6 +601,7 @@ class DiceGameScreen(Screen):
                 )
                 if resp.status_code == 200:
                     data = resp.json()
+                    self._maybe_update_my_index_from_payload(data, trusted=True)
                     roll_val = int(data.get("roll") or 1)
                     Clock.schedule_once(
                         lambda dt: self._animate_dice_and_apply_server(data, roll_val), 0
