@@ -388,6 +388,43 @@ class DiceGameScreen(Screen):
             print(f"[INDEX][WARN] resolve failed: {e}")
             self._my_index = 0
 
+    def _maybe_update_my_index_from_payload(self, payload):
+        """Try to refresh my_index based on server payload."""
+        if not payload:
+            return False
+
+        idx = None
+        for key in ("player_index", "player_idx", "my_index", "self_index"):
+            if key in payload and payload.get(key) is not None:
+                idx = payload.get(key)
+                break
+
+        if idx is None:
+            my_uid = None
+            if storage:
+                user = storage.get_user() or {}
+                my_uid = user.get("id") or user.get("_id")
+
+            candidates = payload.get("player_ids") or payload.get("players_ids") or payload.get("ids")
+            if my_uid is not None and isinstance(candidates, (list, tuple)):
+                for i, pid in enumerate(candidates):
+                    if pid is not None and str(pid) == str(my_uid):
+                        idx = i
+                        break
+
+        if idx is None:
+            return False
+
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            return False
+
+        self._my_index = idx
+        if storage:
+            storage.set_my_player_index(idx)
+        return True
+
     # ---------- turn ----------
     def _highlight_turn(self):
         """Highlight current player and handle bot/idle timers in offline mode."""
@@ -475,7 +512,9 @@ class DiceGameScreen(Screen):
                     verify=False,
                 )
                 if resp.status_code == 200:
-                    srv_turn = resp.json().get("turn")
+                    data = resp.json()
+                    self._maybe_update_my_index_from_payload(data)
+                    srv_turn = data.get("turn")
                     if srv_turn is not None:
                         self._current_player = int(srv_turn)
             except Exception as e:
@@ -516,6 +555,7 @@ class DiceGameScreen(Screen):
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
+                    Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
                     return
 
                 elif resp.status_code == 400 and "Match not active" in resp.text:
@@ -961,9 +1001,36 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[POLL][ERR] {e}")
 
+    def _sync_remote_turn(self, reason: str = ""):
+        """Force-refresh state from backend (used after 409 or manual resync)."""
+        if not self._online or not self.match_id or not self._token():
+            return
+
+        self._debug(f"[SYNC][REFRESH] Triggered ({reason or 'unspecified'})")
+
+        def worker():
+            try:
+                resp = requests.get(
+                    f"{self._backend()}/matches/check",
+                    headers={"Authorization": f"Bearer {self._token()}"},
+                    params={"match_id": self.match_id},
+                    timeout=6,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self._maybe_update_my_index_from_payload(data)
+                    Clock.schedule_once(lambda dt: self._on_server_event(data), 0)
+            except Exception as e:
+                self._debug(f"[SYNC][REFRESH][ERR] {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # ---------- core server event handler ----------
     def _on_server_event(self, payload: dict):
         try:
+            self._maybe_update_my_index_from_payload(payload)
+
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
             # =====================================================================
@@ -1259,6 +1326,7 @@ class DiceGameScreen(Screen):
                 return
 
             data = resp.json()
+            self._maybe_update_my_index_from_payload(data)
             srv_turn = int(data.get("turn", -1))
             if srv_turn != self._my_index or srv_turn in forfeited:
                 self._debug(
