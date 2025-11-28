@@ -359,6 +359,59 @@ class DiceGameScreen(Screen):
             print(f"[INDEX][WARN] resolve failed: {e}")
             self._my_index = 0
 
+    def _sync_remote_identity(self, payload: dict):
+        """Align my index / player count with backend payload."""
+        try:
+            if not payload:
+                return
+
+            # Determine number of players
+            srv_num = payload.get("num_players")
+            if srv_num in (2, 3):
+                self._num_players = int(srv_num)
+
+            # Collect ids from payload (supports both consolidated + legacy keys)
+            ids = payload.get("player_ids")
+            if not ids:
+                ids = [
+                    payload.get("p1_id"),
+                    payload.get("p2_id"),
+                    payload.get("p3_id"),
+                ]
+            if ids:
+                ids = list(ids)
+                while len(ids) < 3:
+                    ids.append(None)
+                if storage:
+                    try:
+                        storage.set_player_ids(ids)
+                    except Exception:
+                        pass
+            else:
+                ids = [None, None, None]
+
+            # Accept backend-provided explicit index, otherwise resolve via ids
+            explicit_idx = payload.get("player_index")
+            if explicit_idx is not None:
+                self._my_index = int(explicit_idx)
+                return
+
+            uid = (storage.get_user() or {}).get("id") if storage else None
+            if uid is None:
+                return
+
+            for idx, pid in enumerate(ids[: max(2, self._num_players)]):
+                try:
+                    if pid is not None and int(pid) == int(uid):
+                        if self._my_index != idx:
+                            self._my_index = idx
+                            self._debug(f"[SYNC] Local player mapped to slot {idx}")
+                        return
+                except Exception:
+                    continue
+        except Exception as e:
+            self._debug(f"[IDENTITY][ERR] {e}")
+
     # ---------- turn ----------
     def _highlight_turn(self):
         """Highlight current player and handle bot/idle timers in offline mode."""
@@ -478,12 +531,22 @@ class DiceGameScreen(Screen):
                     )
 
                 elif resp.status_code == 409:
+                    data = {}
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        pass
+                    self._sync_remote_identity(data)
+                    srv_turn = data.get("turn")
+                    if srv_turn is not None:
+                        self._current_player = int(srv_turn)
                     self._debug("[TURN] Server rejected roll — not your turn.")
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
+                    Clock.schedule_once(lambda dt: self._highlight_turn(), 0)
                     return
 
                 elif resp.status_code == 400 and "Match not active" in resp.text:
@@ -926,6 +989,7 @@ class DiceGameScreen(Screen):
     # ---------- core server event handler ----------
     def _on_server_event(self, payload: dict):
         try:
+            self._sync_remote_identity(payload)
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
             # =====================================================================
