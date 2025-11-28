@@ -155,6 +155,9 @@ class DiceGameScreen(Screen):
         self._last_state_sig = None  # (positions tuple, last_roll, turn)
         self._last_roll_animated = None
         self._forfeited_players = set()
+        self._first_turn_synced = False
+        self._auto_from_timer = False
+        self._last_roll_time = 0
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -297,6 +300,13 @@ class DiceGameScreen(Screen):
             self._forfeited_players.clear()
         else:
             self._forfeited_players = set()
+
+        # reset volatile flags for new sessions to avoid stale turn/lock state
+        self._first_turn_synced = False
+        self._auto_from_timer = False
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._last_roll_time = 0
 
         # restore any portraits/coins that might have been hidden due to previous forfeits
         for idx in range(3):
@@ -869,6 +879,7 @@ class DiceGameScreen(Screen):
         self._last_roll_seen = None
         self._last_state_sig = None
         self._last_roll_animated = None
+        self._first_turn_synced = False
         if WEBSOCKET_OK:
             self._ws_stop.clear()
             self._ws_thread = threading.Thread(target=self._ws_worker, daemon=True)
