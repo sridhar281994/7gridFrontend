@@ -287,11 +287,23 @@ class DiceGameScreen(Screen):
     # ---------- state ----------
     def _reset_game_state(self):
         """Reset local positions and flags; used mainly for offline/bot games."""
+        self._cancel_turn_timer()
         self._positions = [0, 0, 0]
         self._spawned_on_board = [False, False, False]
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._bot_rolling = False
+        self._end_turn_pending = False
+        self._auto_from_timer = False
+        self._first_turn_synced = False
+        self._last_roll_time = 0
+        self._last_state_sig = None
+        self._last_roll_seen = None
+        self._last_roll_animated = None
+        self._forfeited_players = set()
 
         forfeited = getattr(self, "_forfeited_players", set())
         active_players = [i for i in range(self._num_players) if i not in forfeited]
@@ -325,6 +337,12 @@ class DiceGameScreen(Screen):
                     pass
             self._debug("[INIT] Forcing offline mode for bot game")
 
+        if not self._online and storage:
+            try:
+                storage.set_my_player_index(0)
+            except Exception:
+                pass
+
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
         if self._online:
@@ -334,18 +352,134 @@ class DiceGameScreen(Screen):
 
     def _resolve_my_index(self):
         try:
-            uid = (storage.get_user() or {}).get("id") if storage else None
+            preferred = storage.get_my_player_index() if storage else None
+            if preferred is not None:
+                self._update_my_index(preferred)
+                return
+
+            uid = storage.get_user_id() if storage else None
             pids = storage.get_player_ids() if storage else []
             num = storage.get_num_players() or self._num_players
             for i, pid in enumerate((pids or [])[:num]):
                 if pid is not None and pid == uid:
-                    self._my_index = i
-                    break
-            else:
-                self._my_index = 0
+                    self._update_my_index(i)
+                    return
+
+            self._update_my_index(0)
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
-            self._my_index = 0
+            self._update_my_index(0)
+
+    def _update_my_index(self, idx: int):
+        try:
+            idx_int = int(idx)
+        except Exception:
+            return
+        if idx_int < 0:
+            return
+        self._my_index = idx_int
+        if storage:
+            try:
+                storage.set_my_player_index(idx_int)
+            except Exception:
+                pass
+
+    def _sync_remote_identity(self, payload: dict):
+        """Align my index / player count with backend payload."""
+        try:
+            if not payload:
+                return
+
+            # Determine number of players
+            srv_num = payload.get("num_players")
+            if srv_num in (2, 3):
+                self._num_players = int(srv_num)
+
+            # Collect ids from payload (supports both consolidated + legacy keys)
+            ids = payload.get("player_ids")
+            if not ids:
+                ids = [
+                    payload.get("p1_id"),
+                    payload.get("p2_id"),
+                    payload.get("p3_id"),
+                ]
+            if ids:
+                ids = list(ids)
+                while len(ids) < 3:
+                    ids.append(None)
+                if storage:
+                    try:
+                        storage.set_player_ids(ids)
+                    except Exception:
+                        pass
+            else:
+                ids = [None, None, None]
+
+            # Accept backend-provided explicit index, otherwise resolve via ids
+            explicit_idx = payload.get("player_index")
+            if explicit_idx is not None:
+                self._update_my_index(explicit_idx)
+                return
+
+            uid = storage.get_user_id() if storage else None
+            if uid is None:
+                pref = storage.get_my_player_index() if storage else None
+                if pref is not None:
+                    self._update_my_index(pref)
+                return
+
+            for idx, pid in enumerate(ids[: max(2, self._num_players)]):
+                try:
+                    if pid is not None and int(pid) == int(uid):
+                        if self._my_index != idx:
+                            self._debug(f"[SYNC] Local player mapped to slot {idx}")
+                        self._update_my_index(idx)
+                        return
+                except Exception:
+                    continue
+        except Exception as e:
+            self._debug(f"[IDENTITY][ERR] {e}")
+
+    def _apply_backend_turn(self, turn):
+        """Safely apply backend-provided turn index."""
+        if turn is None:
+            return False
+        try:
+            nxt = int(turn)
+        except Exception:
+            return False
+        if nxt < 0:
+            return False
+        if nxt != self._current_player:
+            self._current_player = nxt % max(1, self._num_players)
+            self._debug(f"[TURN][SYNC] → player {self._current_player}")
+            return True
+        return False
+
+    def _refresh_turn_from_server(self, delay: float = 0.0):
+        """Fetch latest turn from backend when payload omits it."""
+        if not self._online or not self.match_id or not self._token():
+            return
+
+        def worker():
+            try:
+                resp = requests.get(
+                    f"{self._backend()}/matches/check",
+                    headers={"Authorization": f"Bearer {self._token()}"},
+                    params={"match_id": self.match_id},
+                    timeout=5,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    Clock.schedule_once(
+                        lambda dt: (self._sync_remote_identity(data), self._apply_backend_turn(data.get("turn")), self._highlight_turn()),
+                        0,
+                    )
+            except Exception as e:
+                self._debug(f"[TURN][REFRESH][ERR] {e}")
+
+        Clock.schedule_once(lambda dt: threading.Thread(target=worker, daemon=True).start(), max(0.0, delay))
 
     # ---------- turn ----------
     def _highlight_turn(self):
@@ -466,12 +600,21 @@ class DiceGameScreen(Screen):
                     )
 
                 elif resp.status_code == 409:
+                    data = {}
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        pass
+                    self._sync_remote_identity(data)
+                    srv_turn = data.get("turn")
+                    self._apply_backend_turn(srv_turn)
                     self._debug("[TURN] Server rejected roll — not your turn.")
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
+                    Clock.schedule_once(lambda dt: self._highlight_turn(), 0)
                     return
 
                 elif resp.status_code == 400 and "Match not active" in resp.text:
@@ -717,6 +860,10 @@ class DiceGameScreen(Screen):
 
     # ---------- toast ----------
     def _show_temp_popup(self, msg: str, duration: float = 2.0):
+        if threading.current_thread() is not threading.main_thread():
+            Clock.schedule_once(lambda dt: self._show_temp_popup(msg, duration), 0)
+            return
+
         try:
             if not hasattr(self, "_toast_popup") or self._toast_popup is None:
                 layout = BoxLayout(orientation="vertical", spacing=8, padding=(14, 12, 14, 12))
@@ -914,6 +1061,7 @@ class DiceGameScreen(Screen):
     # ---------- core server event handler ----------
     def _on_server_event(self, payload: dict):
         try:
+            self._sync_remote_identity(payload)
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
             # =====================================================================
@@ -1007,9 +1155,9 @@ class DiceGameScreen(Screen):
                 self._spawned_on_board[actor] = True
                 self._move_coin_to_box(actor, 0)
 
-                # Turn update
-                self._current_player = int(turn) if turn is not None else (actor + 1) % self._num_players
-                self._debug(f"[TURN][SPAWN] → player {self._current_player}")
+                if not self._apply_backend_turn(turn):
+                    self._debug("[TURN][SPAWN] Backend turn missing → refresh")
+                    self._refresh_turn_from_server(0.2)
 
                 Clock.schedule_once(lambda dt: self._unlock_and_continue(), 0.6)
                 return
@@ -1103,18 +1251,13 @@ class DiceGameScreen(Screen):
             forfeited = getattr(self, "_forfeited_players", set())
             active = [i for i in range(self._num_players) if i not in forfeited]
 
-            # Backend turn always preferred
-            if turn is not None:
-                next_turn = int(turn)
-            else:
-                next_turn = (actor + 1) % self._num_players
-
-            # If backend turn belongs to forfeited → fix it
-            if next_turn not in active:
-                next_turn = active[0]
-
-            self._current_player = next_turn
-            self._debug(f"[TURN][SYNC] → player {self._current_player}")
+            if not self._apply_backend_turn(turn):
+                fallback = (actor + 1) % self._num_players if actor is not None else self._current_player
+                if active:
+                    if fallback not in active:
+                        fallback = active[0]
+                    self._current_player = fallback
+                    self._debug(f"[TURN][FALLBACK] → player {self._current_player}")
 
             # =====================================================================
             # 10. UNLOCK AND CONTINUE
