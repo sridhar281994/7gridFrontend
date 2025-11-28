@@ -323,7 +323,7 @@ class UserMatchScreen(Screen):
                     my_idx = None
 
         if my_idx is None:
-            uid = (storage.get_user() or {}).get("id")
+            uid = storage.get_user_id()
             if uid is not None:
                 for i, pid in enumerate(pids or []):
                     try:

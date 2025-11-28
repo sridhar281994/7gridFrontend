@@ -357,7 +357,7 @@ class DiceGameScreen(Screen):
                 self._update_my_index(preferred)
                 return
 
-            uid = (storage.get_user() or {}).get("id") if storage else None
+            uid = storage.get_user_id() if storage else None
             pids = storage.get_player_ids() if storage else []
             num = storage.get_num_players() or self._num_players
             for i, pid in enumerate((pids or [])[:num]):
@@ -421,7 +421,7 @@ class DiceGameScreen(Screen):
                 self._update_my_index(explicit_idx)
                 return
 
-            uid = (storage.get_user() or {}).get("id") if storage else None
+            uid = storage.get_user_id() if storage else None
             if uid is None:
                 pref = storage.get_my_player_index() if storage else None
                 if pref is not None:

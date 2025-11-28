@@ -35,6 +35,12 @@ def set_user(user: dict):
     if not isinstance(user, dict):
         return
 
+    if not user.get("id"):
+        for key in ("user_id", "player_id", "uid"):
+            if user.get(key) not in (None, "", "null"):
+                user["id"] = user[key]
+                break
+
     name = user.get("name")
     email = user.get("email")
     phone = user.get("phone")
@@ -57,6 +63,17 @@ def set_user(user: dict):
 def get_user() -> Optional[dict]:
     """Return full user dict, including display_name if available."""
     return _state.get("user")
+
+
+def get_user_id():
+    """Helper for fetching whichever identifier backend supplied."""
+    user = _state.get("user") or {}
+    for key in ("id", "user_id", "player_id", "uid"):
+        val = user.get(key)
+        if val not in (None, "", "null"):
+            return val
+    return None
+
 
 def get_display_name() -> str:
     """Get a safe display name for UI screens."""
