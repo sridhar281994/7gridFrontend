@@ -345,7 +345,11 @@ class DiceGameScreen(Screen):
             self._game_active = False
             return
 
-        self._current_player = active_players[0]
+        # start turn randomly among available players for each new game
+        try:
+            self._current_player = random.choice(active_players)
+        except Exception:
+            self._current_player = active_players[0]
         self._place_coins_near_portraits()
         self._highlight_turn()
 
