@@ -357,15 +357,33 @@ class DiceGameScreen(Screen):
 
     def _resolve_my_index(self):
         try:
-            uid = (storage.get_user() or {}).get("id") if storage else None
+            # Prefer stored slot if matchmaking recorded it.
+            stored_idx = storage.get_my_player_index() if storage else None
+            num_players = storage.get_num_players() if storage else self._num_players
+            if isinstance(stored_idx, int) and 0 <= stored_idx < (num_players or self._num_players):
+                self._my_index = stored_idx
+                return
+
+            user = storage.get_user() if storage else None
+            uid = None
+            if isinstance(user, dict):
+                uid = user.get("id") or user.get("_id")
+
             pids = storage.get_player_ids() if storage else []
-            num = storage.get_num_players() or self._num_players
-            for i, pid in enumerate((pids or [])[:num]):
-                if pid is not None and pid == uid:
-                    self._my_index = i
-                    break
-            else:
-                self._my_index = 0
+            num = num_players or self._num_players
+            if uid is not None:
+                for i, pid in enumerate((pids or [])[:num]):
+                    if pid is not None and str(pid) == str(uid):
+                        self._my_index = i
+                        if storage:
+                            storage.set_my_player_index(i)
+                        return
+
+            # Fallback to slot 0 if we still cannot determine.
+            self._my_index = 0
+            if storage:
+                storage.set_my_player_index(0)
+
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
             self._my_index = 0

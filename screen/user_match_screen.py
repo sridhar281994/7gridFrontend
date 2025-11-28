@@ -248,6 +248,26 @@ class UserMatchScreen(Screen):
             storage.set_player_names(*players[: self.selected_mode])
             storage.set_player_ids(pids)
 
+            # Persist my player index for online games so DiceGameScreen knows my slot.
+            my_idx = None
+            user = storage.get_user() if storage else None
+            uid = None
+            if isinstance(user, dict):
+                uid = user.get("id") or user.get("_id")
+            if uid is not None:
+                for idx, pid in enumerate(pids or []):
+                    if pid is not None and str(pid) == str(uid):
+                        my_idx = idx
+                        break
+            if my_idx is None:
+                candidate = data.get("player_index") if isinstance(data, dict) else None
+                if candidate is not None:
+                    try:
+                        my_idx = int(candidate)
+                    except (TypeError, ValueError):
+                        my_idx = None
+            storage.set_my_player_index(my_idx if my_idx is not None else 0)
+
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
         self.manager.current = "dicegame"
 
