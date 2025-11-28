@@ -1,30 +1,3 @@
-    def _resolve_my_index_from_ids(self, ids):
-        if not storage:
-            return None
-        user = storage.get_user() or {}
-        uid = user.get("id") or user.get("_id")
-        if uid is None or not isinstance(ids, (list, tuple)):
-            return None
-        for idx, pid in enumerate(ids):
-            if pid is not None and str(pid) == str(uid):
-                return idx
-        return None
-
-    def _resolve_my_index_from_payload(self, payload, trusted: bool = False):
-        if not payload:
-            return None
-
-        ids = payload.get("player_ids")
-        idx = self._resolve_my_index_from_ids(ids)
-        if idx is not None:
-            return idx
-
-        if trusted and payload.get("player_index") is not None:
-            try:
-                return int(payload.get("player_index"))
-            except (TypeError, ValueError):
-                return None
-        return None
 import threading
 import requests
 import random
@@ -46,6 +19,7 @@ except Exception:
 
 
 class UserMatchScreen(Screen):
+    # ---------- helpers ----------
     def _resolve_my_index_from_ids(self, ids):
         if not storage or not isinstance(ids, (list, tuple)):
             return None
