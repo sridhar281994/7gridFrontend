@@ -154,6 +154,7 @@ class DiceGameScreen(Screen):
         self._last_roll_seen = None
         self._last_state_sig = None  # (positions tuple, last_roll, turn)
         self._last_roll_animated = None
+        self._forfeited_players = set()
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -292,6 +293,18 @@ class DiceGameScreen(Screen):
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        if hasattr(self, "_forfeited_players"):
+            self._forfeited_players.clear()
+        else:
+            self._forfeited_players = set()
+
+        # restore any portraits/coins that might have been hidden due to previous forfeits
+        for idx in range(3):
+            pic = self.ids.get(f"p{idx + 1}_pic")
+            if pic:
+                pic.opacity = 1
+            if idx < len(self._coins) and self._coins[idx]:
+                self._coins[idx].opacity = 1
 
         forfeited = getattr(self, "_forfeited_players", set())
         active_players = [i for i in range(self._num_players) if i not in forfeited]
@@ -717,6 +730,11 @@ class DiceGameScreen(Screen):
 
     # ---------- toast ----------
     def _show_temp_popup(self, msg: str, duration: float = 2.0):
+        # ensure popup interactions always run on the main/UI thread
+        if threading.current_thread() is not threading.main_thread():
+            Clock.schedule_once(lambda dt: self._show_temp_popup(msg, duration), 0)
+            return
+
         try:
             if not hasattr(self, "_toast_popup") or self._toast_popup is None:
                 layout = BoxLayout(orientation="vertical", spacing=8, padding=(14, 12, 14, 12))
