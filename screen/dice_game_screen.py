@@ -208,6 +208,28 @@ class DiceGameScreen(Screen):
         except Exception:
             pass
 
+    def _set_dice_button_enabled(self, enabled: bool):
+        btn = self.ids.get("dice_button")
+        if not btn:
+            return
+        try:
+            btn.disabled = not enabled
+            btn.opacity = 1.0 if enabled else 0.6
+        except Exception:
+            pass
+
+    def _mark_roll_start(self, source: str = "manual"):
+        self._roll_inflight = True
+        self._roll_locked = True
+        self._roll_source = source
+        self._set_dice_button_enabled(False)
+
+    def _mark_roll_end(self):
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._roll_source = None
+        self._set_dice_button_enabled(True)
+
     # ---------- lifecycle ----------
     def on_pre_enter(self, *_):
         if storage:
@@ -469,6 +491,10 @@ class DiceGameScreen(Screen):
         if not self._game_active:
             return
 
+        if getattr(self, "_roll_inflight", False):
+            self._debug("[ROLL] Blocked — roll already processing.")
+            return
+
         # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
         self._cancel_turn_timer()
 
@@ -479,21 +505,16 @@ class DiceGameScreen(Screen):
         self._last_roll_time = now
 
         if not self._online:
-            if getattr(self, "_roll_inflight", False):
-                return
-            self._roll_locked = False
             if self._current_player != 0:
                 self._show_temp_popup("Not your turn!", duration=1.8)
                 return
 
-            self._roll_locked = True
-            self._roll_inflight = True
+            self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
             Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
-            Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 1.0)
-            Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 1.0)
+            Clock.schedule_once(lambda dt: self._mark_roll_end(), 1.0)
             return
 
         # ONLINE
@@ -525,12 +546,8 @@ class DiceGameScreen(Screen):
                 self._show_temp_popup("Not your turn!", duration=1.8)
             return
 
-        if getattr(self, "_roll_inflight", False):
-            self._debug("[ROLL] Ignored — already in flight.")
-            return
-
-        self._roll_locked = False
-        self._roll_inflight = True
+        source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
+        self._mark_roll_start(source)
 
         def worker():
             try:
@@ -552,8 +569,7 @@ class DiceGameScreen(Screen):
                     self._debug("[TURN] Server rejected roll — not your turn.")
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
-                    Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0)
-                    Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0)
+                    Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
                     Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
                     return
@@ -562,8 +578,7 @@ class DiceGameScreen(Screen):
                     self._debug("[ROLL] Match not active — stopping game & timers.")
                     self._game_active = False
                     self._cancel_turn_timer()
-                    self._roll_inflight = False
-                    self._roll_locked = False
+                    self._mark_roll_end()
                     return
 
                 else:
@@ -573,8 +588,7 @@ class DiceGameScreen(Screen):
                 self._debug(f"[ROLL][ERR] {e}")
 
             finally:
-                Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0.1)
-                Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0.1)
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
                 Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0.1)
                 if getattr(self, "_auto_from_timer", False):
                     Clock.schedule_once(lambda dt: setattr(self, "_auto_from_timer", False), 0)
@@ -1339,9 +1353,6 @@ class DiceGameScreen(Screen):
 
         self._debug(f"[AUTO-ROLL] confirmed auto-roll for player {self._my_index}")
         self._auto_from_timer = True
-        self._roll_locked = False
-        self._roll_inflight = False
-
         try:
             if "dice_button" in self.ids:
                 dummy = random.randint(1, 6)
@@ -1410,8 +1421,7 @@ class DiceGameScreen(Screen):
 
     def _unlock_and_continue(self):
         try:
-            self._roll_locked = False
-            self._roll_inflight = False
+            self._mark_roll_end()
             self._end_turn_pending = False
             self._cancel_turn_timer()
 
