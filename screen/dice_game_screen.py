@@ -149,7 +149,7 @@ class DiceGameScreen(Screen):
         self.match_id = None
 
         # state helpers
-        self._my_index = 0
+        self._my_index = None
         self._roll_inflight = False
         self._last_roll_seen = None
         self._last_state_sig = None  # (positions tuple, last_roll, turn)
@@ -401,10 +401,11 @@ class DiceGameScreen(Screen):
                             storage.set_my_player_index(i)
                         return
 
-            # Fallback to slot 0 if we still cannot determine.
-            self._my_index = 0
-            if storage:
-                storage.set_my_player_index(0)
+        # Fallback only for offline/bot games; online will wait for server sync.
+        fallback_idx = 0 if not self._online else None
+        self._my_index = fallback_idx
+        if storage:
+            storage.set_my_player_index(fallback_idx)
 
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
@@ -520,6 +521,11 @@ class DiceGameScreen(Screen):
         # ONLINE
         if not self.match_id or not self._token():
             self._debug("[ROLL] Missing match_id or token — aborting online roll.")
+            return
+
+        if self._my_index is None:
+            self._debug("[ROLL] Waiting for player index sync before rolling.")
+            self._sync_remote_turn("no-player-index")
             return
 
         if not getattr(self, "_first_turn_synced", False):
@@ -1309,6 +1315,11 @@ class DiceGameScreen(Screen):
 
     def _auto_roll_real_online(self):
         if not self._online or not self._game_active:
+            return
+
+        if self._my_index is None:
+            self._debug("[AUTO-ROLL] Aborted — player index unknown.")
+            self._sync_remote_turn("auto-no-index")
             return
 
         if getattr(self, "_roll_inflight", False):

@@ -127,6 +127,13 @@ class UserMatchScreen(Screen):
                     data = resp.json()
                     match_id = data.get("match_id")
                     if storage:
+                        if data.get("player_ids"):
+                            storage.set_player_ids(data.get("player_ids"))
+                        if data.get("player_index") is not None:
+                            try:
+                                storage.set_my_player_index(int(data.get("player_index")))
+                            except (TypeError, ValueError):
+                                pass
                         storage.set_current_match(match_id)
                         storage.set_stake_amount(self.selected_amount)
                         storage.set_num_players(self.selected_mode)
@@ -250,22 +257,23 @@ class UserMatchScreen(Screen):
 
             # Persist my player index for online games so DiceGameScreen knows my slot.
             my_idx = None
-            user = storage.get_user() if storage else None
-            uid = None
-            if isinstance(user, dict):
-                uid = user.get("id") or user.get("_id")
-            if uid is not None:
-                for idx, pid in enumerate(pids or []):
-                    if pid is not None and str(pid) == str(uid):
-                        my_idx = idx
-                        break
+            candidate = data.get("player_index") if isinstance(data, dict) else None
+            if candidate is not None:
+                try:
+                    my_idx = int(candidate)
+                except (TypeError, ValueError):
+                    my_idx = None
+
             if my_idx is None:
-                candidate = data.get("player_index") if isinstance(data, dict) else None
-                if candidate is not None:
-                    try:
-                        my_idx = int(candidate)
-                    except (TypeError, ValueError):
-                        my_idx = None
+                user = storage.get_user() if storage else None
+                uid = None
+                if isinstance(user, dict):
+                    uid = user.get("id") or user.get("_id")
+                if uid is not None:
+                    for idx, pid in enumerate(pids or []):
+                        if pid is not None and str(pid) == str(uid):
+                            my_idx = idx
+                            break
             storage.set_my_player_index(my_idx if my_idx is not None else 0)
 
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
@@ -292,6 +300,17 @@ class UserMatchScreen(Screen):
             if resp.status_code == 200:
                 data = resp.json()
                 self._last_poll_data = data
+                if storage:
+                    ids_payload = data.get("player_ids")
+                    if ids_payload:
+                        storage.set_player_ids(ids_payload)
+                    else:
+                        storage.set_player_ids([data.get("p1_id"), data.get("p2_id"), data.get("p3_id")])
+                    if data.get("player_index") is not None:
+                        try:
+                            storage.set_my_player_index(int(data.get("player_index")))
+                        except (TypeError, ValueError):
+                            pass
                 if data.get("ready"):
                     self._stop_polling = True
                     if self._poll_event:
