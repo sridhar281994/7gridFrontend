@@ -337,6 +337,12 @@ class DiceGameScreen(Screen):
                     pass
             self._debug("[INIT] Forcing offline mode for bot game")
 
+        if not self._online and storage:
+            try:
+                storage.set_my_player_index(0)
+            except Exception:
+                pass
+
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
         if self._online:
@@ -346,18 +352,37 @@ class DiceGameScreen(Screen):
 
     def _resolve_my_index(self):
         try:
+            preferred = storage.get_my_player_index() if storage else None
+            if preferred is not None:
+                self._update_my_index(preferred)
+                return
+
             uid = (storage.get_user() or {}).get("id") if storage else None
             pids = storage.get_player_ids() if storage else []
             num = storage.get_num_players() or self._num_players
             for i, pid in enumerate((pids or [])[:num]):
                 if pid is not None and pid == uid:
-                    self._my_index = i
-                    break
-            else:
-                self._my_index = 0
+                    self._update_my_index(i)
+                    return
+
+            self._update_my_index(0)
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
-            self._my_index = 0
+            self._update_my_index(0)
+
+    def _update_my_index(self, idx: int):
+        try:
+            idx_int = int(idx)
+        except Exception:
+            return
+        if idx_int < 0:
+            return
+        self._my_index = idx_int
+        if storage:
+            try:
+                storage.set_my_player_index(idx_int)
+            except Exception:
+                pass
 
     def _sync_remote_identity(self, payload: dict):
         """Align my index / player count with backend payload."""
@@ -393,19 +418,22 @@ class DiceGameScreen(Screen):
             # Accept backend-provided explicit index, otherwise resolve via ids
             explicit_idx = payload.get("player_index")
             if explicit_idx is not None:
-                self._my_index = int(explicit_idx)
+                self._update_my_index(explicit_idx)
                 return
 
             uid = (storage.get_user() or {}).get("id") if storage else None
             if uid is None:
+                pref = storage.get_my_player_index() if storage else None
+                if pref is not None:
+                    self._update_my_index(pref)
                 return
 
             for idx, pid in enumerate(ids[: max(2, self._num_players)]):
                 try:
                     if pid is not None and int(pid) == int(uid):
                         if self._my_index != idx:
-                            self._my_index = idx
                             self._debug(f"[SYNC] Local player mapped to slot {idx}")
+                        self._update_my_index(idx)
                         return
                 except Exception:
                     continue
@@ -832,6 +860,10 @@ class DiceGameScreen(Screen):
 
     # ---------- toast ----------
     def _show_temp_popup(self, msg: str, duration: float = 2.0):
+        if threading.current_thread() is not threading.main_thread():
+            Clock.schedule_once(lambda dt: self._show_temp_popup(msg, duration), 0)
+            return
+
         try:
             if not hasattr(self, "_toast_popup") or self._toast_popup is None:
                 layout = BoxLayout(orientation="vertical", spacing=8, padding=(14, 12, 14, 12))

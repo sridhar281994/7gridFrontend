@@ -250,6 +250,12 @@ class UserMatchScreen(Screen):
             self.ids.p3_pic.source = bots[1]["pic"]
             self.ids.p3_name.text = bots[1]["name"]
 
+        if storage:
+            try:
+                storage.set_my_player_index(0)
+            except Exception:
+                pass
+
         self._go_game(players, ids)
 
     # -------------------------
@@ -281,6 +287,8 @@ class UserMatchScreen(Screen):
             pids = [data.get("p1_id"), data.get("p2_id"), data.get("p3_id")]
             turn = ids_or_turn
 
+        self._remember_my_index(players, pids, data)
+
         game = self.manager.get_screen("dicegame")
         if self.selected_mode == 2:
             game.set_stage_and_players(self.selected_amount, players[0], players[1],
@@ -300,6 +308,50 @@ class UserMatchScreen(Screen):
             storage.set_player_ids(pids)
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
         self.manager.current = "dicegame"
+
+    def _remember_my_index(self, players, pids, data):
+        if not storage:
+            return
+
+        my_idx = None
+        if data:
+            idx = data.get("player_index")
+            if idx is not None:
+                try:
+                    my_idx = int(idx)
+                except Exception:
+                    my_idx = None
+
+        if my_idx is None:
+            uid = (storage.get_user() or {}).get("id")
+            if uid is not None:
+                for i, pid in enumerate(pids or []):
+                    try:
+                        if pid is not None and int(pid) == int(uid):
+                            my_idx = i
+                            break
+                    except Exception:
+                        continue
+
+        if my_idx is None:
+            display = ""
+            try:
+                display = (storage.get_display_name() or "").strip().lower()
+            except Exception:
+                display = ""
+            if display:
+                for i, name in enumerate(players or []):
+                    if isinstance(name, str) and name.strip().lower() == display:
+                        my_idx = i
+                        break
+
+        if my_idx is None:
+            my_idx = 0
+
+        try:
+            storage.set_my_player_index(int(my_idx))
+        except Exception:
+            pass
 
     # -------------------------
     # Poll match ready
