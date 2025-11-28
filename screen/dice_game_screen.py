@@ -561,6 +561,31 @@ class DiceGameScreen(Screen):
                 self._show_temp_popup("Not your turn!", duration=1.8)
             return
 
+        # final verification with backend to avoid stale turn state
+        try:
+            resp = requests.get(
+                f"{self._backend()}/matches/check",
+                headers={"Authorization": f"Bearer {self._token()}"},
+                params={"match_id": self.match_id},
+                timeout=5,
+                verify=False,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self._maybe_update_my_index_from_payload(data)
+                srv_turn = data.get("turn")
+                if srv_turn is not None:
+                    self._current_player = int(srv_turn)
+                if self._current_player != self._my_index:
+                    self._debug("[ROLL] Aborted — backend reports different turn.")
+                    self._mark_roll_end()
+                    if not getattr(self, "_auto_from_timer", False):
+                        self._show_temp_popup("Not your turn!", duration=1.5)
+                    return
+        except Exception as e:
+            self._debug(f"[ROLL][VERIFY][ERR] {e}")
+            # fallback to previous state; continue rolling
+
         source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
         self._mark_roll_start(source)
 
