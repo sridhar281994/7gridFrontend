@@ -412,6 +412,47 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[IDENTITY][ERR] {e}")
 
+    def _apply_backend_turn(self, turn):
+        """Safely apply backend-provided turn index."""
+        if turn is None:
+            return False
+        try:
+            nxt = int(turn)
+        except Exception:
+            return False
+        if nxt < 0:
+            return False
+        if nxt != self._current_player:
+            self._current_player = nxt % max(1, self._num_players)
+            self._debug(f"[TURN][SYNC] → player {self._current_player}")
+            return True
+        return False
+
+    def _refresh_turn_from_server(self, delay: float = 0.0):
+        """Fetch latest turn from backend when payload omits it."""
+        if not self._online or not self.match_id or not self._token():
+            return
+
+        def worker():
+            try:
+                resp = requests.get(
+                    f"{self._backend()}/matches/check",
+                    headers={"Authorization": f"Bearer {self._token()}"},
+                    params={"match_id": self.match_id},
+                    timeout=5,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    Clock.schedule_once(
+                        lambda dt: (self._sync_remote_identity(data), self._apply_backend_turn(data.get("turn")), self._highlight_turn()),
+                        0,
+                    )
+            except Exception as e:
+                self._debug(f"[TURN][REFRESH][ERR] {e}")
+
+        Clock.schedule_once(lambda dt: threading.Thread(target=worker, daemon=True).start(), max(0.0, delay))
+
     # ---------- turn ----------
     def _highlight_turn(self):
         """Highlight current player and handle bot/idle timers in offline mode."""
@@ -538,8 +579,7 @@ class DiceGameScreen(Screen):
                         pass
                     self._sync_remote_identity(data)
                     srv_turn = data.get("turn")
-                    if srv_turn is not None:
-                        self._current_player = int(srv_turn)
+                    self._apply_backend_turn(srv_turn)
                     self._debug("[TURN] Server rejected roll — not your turn.")
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
@@ -1083,9 +1123,9 @@ class DiceGameScreen(Screen):
                 self._spawned_on_board[actor] = True
                 self._move_coin_to_box(actor, 0)
 
-                # Turn update
-                self._current_player = int(turn) if turn is not None else (actor + 1) % self._num_players
-                self._debug(f"[TURN][SPAWN] → player {self._current_player}")
+                if not self._apply_backend_turn(turn):
+                    self._debug("[TURN][SPAWN] Backend turn missing → refresh")
+                    self._refresh_turn_from_server(0.2)
 
                 Clock.schedule_once(lambda dt: self._unlock_and_continue(), 0.6)
                 return
@@ -1179,18 +1219,13 @@ class DiceGameScreen(Screen):
             forfeited = getattr(self, "_forfeited_players", set())
             active = [i for i in range(self._num_players) if i not in forfeited]
 
-            # Backend turn always preferred
-            if turn is not None:
-                next_turn = int(turn)
-            else:
-                next_turn = (actor + 1) % self._num_players
-
-            # If backend turn belongs to forfeited → fix it
-            if next_turn not in active:
-                next_turn = active[0]
-
-            self._current_player = next_turn
-            self._debug(f"[TURN][SYNC] → player {self._current_player}")
+            if not self._apply_backend_turn(turn):
+                fallback = (actor + 1) % self._num_players if actor is not None else self._current_player
+                if active:
+                    if fallback not in active:
+                        fallback = active[0]
+                    self._current_player = fallback
+                    self._debug(f"[TURN][FALLBACK] → player {self._current_player}")
 
             # =====================================================================
             # 10. UNLOCK AND CONTINUE
