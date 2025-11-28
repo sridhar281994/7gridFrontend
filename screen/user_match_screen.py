@@ -22,7 +22,7 @@ class UserMatchScreen(Screen):
     # ---------- Names bound to KV ----------
     player1_name = StringProperty("Waiting...")
     player2_name = StringProperty("Searching...")
-    player3_name = StringProperty("") # empty for 2-player
+    player3_name = StringProperty("")  # empty for 2-player
 
     # ---------- Rotation angles ----------
     p2_angle = NumericProperty(0)
@@ -30,7 +30,7 @@ class UserMatchScreen(Screen):
 
     # ---------- State ----------
     selected_amount = NumericProperty(0)
-    selected_mode = NumericProperty(2) # 2 or 3 players
+    selected_mode = NumericProperty(2)  # 2 or 3 players
 
     _stop_polling = False
     _poll_event = None
@@ -40,7 +40,7 @@ class UserMatchScreen(Screen):
     _pulse_anims = []
     _bot_cache = None
     _last_poll_data = {}
-    _popup_timer = None # keep a handle to the 12s popup timer
+    _popup_timer = None  # kept for safety but NOT USED anymore
 
     # -------------------------
     # Lifecycle
@@ -61,12 +61,6 @@ class UserMatchScreen(Screen):
                 pass
             self._poll_event = None
         self._stop_polling = True
-        if self._popup_timer is not None:
-            try:
-                Clock.unschedule(self._popup_timer)
-            except Exception:
-                pass
-            self._popup_timer = None
         self._stop_pulse_anims()
         self._p2_rotating = False
         self._p3_rotating = False
@@ -93,13 +87,6 @@ class UserMatchScreen(Screen):
         self._stop_polling = False
         self._bot_cache = None
         self._last_poll_data = {}
-
-        if self._popup_timer is not None:
-            try:
-                Clock.unschedule(self._popup_timer)
-            except Exception:
-                pass
-            self._popup_timer = None
 
         self.player1_name = local_player_name or "You"
         self.player2_name = "Searching..."
@@ -145,8 +132,6 @@ class UserMatchScreen(Screen):
                         storage.set_num_players(self.selected_mode)
                         storage.set_player_names(local_player_name, None, None)
                         storage.set_player_ids([data.get("p1_id"), data.get("p2_id"), data.get("p3_id")])
-                    self._popup_timer = lambda dt: self._show_freeplay_popup(local_player_name)
-                    Clock.schedule_once(self._popup_timer, 12)
                 else:
                     print(f"[ERR] Match create failed: {resp.status_code} {resp.text}")
             except Exception as e:
@@ -184,28 +169,7 @@ class UserMatchScreen(Screen):
                 lbl.opacity = 1
 
     # -------------------------
-    # Popup for bot fallback
-    # -------------------------
-    def _show_freeplay_popup(self, local_player_name: str):
-        if self._stop_polling:
-            return
-        layout = BoxLayout(orientation="vertical", spacing=10, padding=10)
-        layout.add_widget(Label(text="No player joined. Play with bot?"))
-        btn_box = BoxLayout(spacing=10, size_hint_y=None, height=dp(40))
-        btn_yes = Button(text="Yes")
-        btn_no = Button(text="No")
-        btn_box.add_widget(btn_yes)
-        btn_box.add_widget(btn_no)
-        layout.add_widget(btn_box)
-
-        popup = Popup(title="Play with Bot?", content=layout,
-                      size_hint=(None, None), size=(dp(300), dp(180)), auto_dismiss=False)
-        btn_yes.bind(on_release=lambda *_: (popup.dismiss(), self._fallback_to_bots(local_player_name)))
-        btn_no.bind(on_release=lambda *_: (popup.dismiss(), self._stop_polling_and_abandon()))
-        popup.open()
-
-    # -------------------------
-    # Fallback to bots
+    # OFFLINE BOT MODE (ROBOTS Army)
     # -------------------------
     def _fallback_to_bots(self, local_player_name: str):
         BOT_PROFILES = [
@@ -213,6 +177,9 @@ class UserMatchScreen(Screen):
             {"id": -1001, "name": "Crazy Boy", "pic": "assets/bot_crazy.png"},
             {"id": -1002, "name": "Kurfi", "pic": "assets/bot_kurfi.png"},
         ]
+
+        print("[INFO] ROBOTS Army → offline bot mode")
+
         self._stop_polling = True
         if self._poll_event:
             try:
@@ -220,16 +187,11 @@ class UserMatchScreen(Screen):
             except Exception:
                 pass
             self._poll_event = None
-        if self._popup_timer is not None:
-            try:
-                Clock.unschedule(self._popup_timer)
-            except Exception:
-                pass
-            self._popup_timer = None
 
         self._bot_cache = {}
         players = [local_player_name]
         ids = [None, None, None]
+
         if self.selected_mode == 2:
             bot = random.choice(BOT_PROFILES)
             players.append(bot["name"])
@@ -261,18 +223,13 @@ class UserMatchScreen(Screen):
         self._p3_rotating = False
         self._bot_cache = self._bot_cache or {}
         self._stop_polling = True
+
         if self._poll_event:
             try:
                 self._poll_event.cancel()
             except Exception:
                 pass
             self._poll_event = None
-        if self._popup_timer is not None:
-            try:
-                Clock.unschedule(self._popup_timer)
-            except Exception:
-                pass
-            self._popup_timer = None
 
         data = getattr(self, "_last_poll_data", {}) or {}
         if isinstance(ids_or_turn, list):
@@ -283,21 +240,14 @@ class UserMatchScreen(Screen):
 
         game = self.manager.get_screen("dicegame")
         if self.selected_mode == 2:
-            game.set_stage_and_players(self.selected_amount, players[0], players[1],
-                                       match_id=data.get("match_id"))
-            if "p3_box" in self.ids:
-                self.ids.p3_box.opacity = 0
-                self.ids.p3_box.disabled = True
+            game.set_stage_and_players(self.selected_amount, players[0], players[1], match_id=data.get("match_id"))
         else:
-            game.set_stage_and_players(self.selected_amount, players[0], players[1], players[2],
-                                       match_id=data.get("match_id"))
-            if "p3_box" in self.ids:
-                self.ids.p3_box.opacity = 1
-                self.ids.p3_box.disabled = False
+            game.set_stage_and_players(self.selected_amount, players[0], players[1], players[2], match_id=data.get("match_id"))
 
         if storage:
             storage.set_player_names(*players[: self.selected_mode])
             storage.set_player_ids(pids)
+
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
         self.manager.current = "dicegame"
 
@@ -322,14 +272,6 @@ class UserMatchScreen(Screen):
             if resp.status_code == 200:
                 data = resp.json()
                 self._last_poll_data = data
-                if data.get("refunded"):
-                    print("[INFO] Match refunded -> returning to stage")
-                    self._stop_polling = True
-                    if self._poll_event:
-                        self._poll_event.cancel()
-                        self._poll_event = None
-                    self.manager.current = "stage"
-                    return
                 if data.get("ready"):
                     self._stop_polling = True
                     if self._poll_event:
@@ -339,46 +281,6 @@ class UserMatchScreen(Screen):
                     players = [data.get("p1") or "Player 1", data.get("p2") or "Player 2"]
                     if self.selected_mode == 3:
                         players.append(data.get("p3") or "Player 3")
-                    pids = [data.get("p1_id"), data.get("p2_id"), data.get("p3_id")]
-                    if storage:
-                        storage.set_player_ids(pids)
                     self._go_game(players, data.get("turn", 0))
-            elif resp.status_code == 404:
-                print("[INFO] Match not found -> returning to stage")
-                self._stop_polling = True
-                if self._poll_event:
-                    self._poll_event.cancel()
-                    self._poll_event = None
-                self.manager.current = "stage"
-            else:
-                print(f"[WARN] Poll failed: {resp.status_code} {resp.text}")
         except Exception as e:
             print(f"[ERR] Poll exception: {e}")
-
-    def _stop_polling_and_abandon(self):
-        self._stop_polling = True
-        if self._poll_event:
-            try:
-                self._poll_event.cancel()
-            except Exception:
-                pass
-            self._poll_event = None
-
-        token = storage.get_token() if storage else None
-        backend = storage.get_backend_url() if storage else None
-        match_id = storage.get_current_match() if storage else None
-        if token and backend and match_id:
-            def worker():
-                try:
-                    resp = requests.post(
-                        f"{backend}/matches/abandon",
-                        headers={"Authorization": f"Bearer {token}"},
-                        json={"match_id": match_id}, timeout=10, verify=False,
-                    )
-                    print(f"[INFO] Abandon response: {resp.status_code} {resp.text}")
-                except Exception as e:
-                    print(f"[ERR] Abandon failed: {e}")
-            threading.Thread(target=worker, daemon=True).start()
-        if storage:
-            storage.set_current_match(None)
-        self.manager.current = "stage"
