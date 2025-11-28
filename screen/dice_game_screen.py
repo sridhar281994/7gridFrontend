@@ -420,23 +420,24 @@ class DiceGameScreen(Screen):
             return False
 
         idx = None
-        for key in ("player_index", "player_idx", "my_index", "self_index"):
-            if key in payload and payload.get(key) is not None:
-                idx = payload.get(key)
-                break
+        my_uid = None
+        if storage:
+            user = storage.get_user() or {}
+            my_uid = user.get("id") or user.get("_id")
 
+        candidates = payload.get("player_ids") or payload.get("players_ids") or payload.get("ids")
+        if my_uid is not None and isinstance(candidates, (list, tuple)):
+            for i, pid in enumerate(candidates):
+                if pid is not None and str(pid) == str(my_uid):
+                    idx = i
+                    break
+
+        # Only fall back to explicit player_index if ids were unavailable.
         if idx is None:
-            my_uid = None
-            if storage:
-                user = storage.get_user() or {}
-                my_uid = user.get("id") or user.get("_id")
-
-            candidates = payload.get("player_ids") or payload.get("players_ids") or payload.get("ids")
-            if my_uid is not None and isinstance(candidates, (list, tuple)):
-                for i, pid in enumerate(candidates):
-                    if pid is not None and str(pid) == str(my_uid):
-                        idx = i
-                        break
+            for key in ("player_index", "player_idx", "my_index", "self_index"):
+                if key in payload and payload.get(key) is not None:
+                    idx = payload.get(key)
+                    break
 
         if idx is None:
             return False
