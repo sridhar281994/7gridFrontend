@@ -19,6 +19,32 @@ except Exception:
 
 
 class UserMatchScreen(Screen):
+    # ---------- helpers ----------
+    def _resolve_my_index_from_ids(self, ids):
+        if not storage or not isinstance(ids, (list, tuple)):
+            return None
+        user = storage.get_user() or {}
+        uid = user.get("id") or user.get("_id")
+        if uid is None:
+            return None
+        for idx, pid in enumerate(ids):
+            if pid is not None and str(pid) == str(uid):
+                return idx
+        return None
+
+    def _resolve_my_index_from_payload(self, payload, trusted: bool = False):
+        if not payload:
+            return None
+        idx = self._resolve_my_index_from_ids(payload.get("player_ids"))
+        if idx is not None:
+            return idx
+        if trusted and payload.get("player_index") is not None:
+            try:
+                return int(payload.get("player_index"))
+            except (TypeError, ValueError):
+                return None
+        return None
+
     # ---------- Names bound to KV ----------
     player1_name = StringProperty("Waiting...")
     player2_name = StringProperty("Searching...")
@@ -127,11 +153,17 @@ class UserMatchScreen(Screen):
                     data = resp.json()
                     match_id = data.get("match_id")
                     if storage:
+                        ids_payload = data.get("player_ids")
+                        if isinstance(ids_payload, (list, tuple)):
+                            storage.set_player_ids(list(ids_payload))
+                        else:
+                            storage.set_player_ids([data.get("p1_id"), data.get("p2_id"), data.get("p3_id")])
+                        idx = self._resolve_my_index_from_payload(data, trusted=True)
+                        storage.set_my_player_index(idx if idx is not None else 0)
                         storage.set_current_match(match_id)
                         storage.set_stake_amount(self.selected_amount)
                         storage.set_num_players(self.selected_mode)
                         storage.set_player_names(local_player_name, None, None)
-                        storage.set_player_ids([data.get("p1_id"), data.get("p2_id"), data.get("p3_id")])
                 else:
                     print(f"[ERR] Match create failed: {resp.status_code} {resp.text}")
             except Exception as e:
@@ -235,8 +267,12 @@ class UserMatchScreen(Screen):
         if isinstance(ids_or_turn, list):
             pids = ids_or_turn
         else:
-            pids = [data.get("p1_id"), data.get("p2_id"), data.get("p3_id")]
-            turn = ids_or_turn
+            ids_from_payload = data.get("player_ids")
+            if isinstance(ids_from_payload, (list, tuple)):
+                pids = list(ids_from_payload)
+            else:
+                pids = [data.get("p1_id"), data.get("p2_id"), data.get("p3_id")]
+            turn = int(ids_or_turn) if ids_or_turn is not None else int(data.get("turn") or 0)
 
         game = self.manager.get_screen("dicegame")
         if self.selected_mode == 2:
@@ -248,8 +284,19 @@ class UserMatchScreen(Screen):
             storage.set_player_names(*players[: self.selected_mode])
             storage.set_player_ids(pids)
 
+            # Persist my player index for online games so DiceGameScreen knows my slot.
+            my_idx = self._resolve_my_index_from_ids(pids)
+            if my_idx is None:
+                my_idx = self._resolve_my_index_from_payload(data, trusted=True)
+            storage.set_my_player_index(my_idx if my_idx is not None else 0)
+
         Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
         self.manager.current = "dicegame"
+
+        if hasattr(storage, "set_initial_turn"):
+            storage.set_initial_turn(int(turn))
+        if hasattr(game, "sync_initial_turn"):
+            Clock.schedule_once(lambda dt: game.sync_initial_turn(turn), 0.2)
 
     # -------------------------
     # Poll match ready
@@ -272,6 +319,14 @@ class UserMatchScreen(Screen):
             if resp.status_code == 200:
                 data = resp.json()
                 self._last_poll_data = data
+                if storage:
+                    ids_payload = data.get("player_ids")
+                    if isinstance(ids_payload, (list, tuple)):
+                        storage.set_player_ids(list(ids_payload))
+                    else:
+                        storage.set_player_ids([data.get("p1_id"), data.get("p2_id"), data.get("p3_id")])
+                    idx = self._resolve_my_index_from_payload(data, trusted=True)
+                    storage.set_my_player_index(idx if idx is not None else 0)
                 if data.get("ready"):
                     self._stop_polling = True
                     if self._poll_event:
