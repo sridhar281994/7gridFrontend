@@ -378,6 +378,7 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
     def _resolve_my_index(self):
+        fallback_idx = 0 if not self._online else None
         try:
             # Prefer stored slot if matchmaking recorded it.
             stored_idx = storage.get_my_player_index() if storage else None
@@ -401,15 +402,13 @@ class DiceGameScreen(Screen):
                             storage.set_my_player_index(i)
                         return
 
-        # Fallback only for offline/bot games; online will wait for server sync.
-        fallback_idx = 0 if not self._online else None
-        self._my_index = fallback_idx
-        if storage:
-            storage.set_my_player_index(fallback_idx)
-
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
-            self._my_index = 0
+            fallback_idx = 0
+
+        self._my_index = fallback_idx
+        if fallback_idx is not None and storage:
+            storage.set_my_player_index(fallback_idx)
 
     def _maybe_update_my_index_from_payload(self, payload):
         """Try to refresh my_index based on server payload."""
