@@ -19,6 +19,19 @@ from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 
+
+def safe_anim(widget, **kwargs):
+    if widget is None or widget.parent is None:
+        Clock.schedule_once(lambda dt: safe_anim(widget, **kwargs), 0.05)
+        return None
+    try:
+        anim = Animation(**kwargs)
+        anim.start(widget)
+        return anim
+    except Exception:
+        Clock.schedule_once(lambda dt: safe_anim(widget, **kwargs), 0.05)
+        return None
+
 API_URL = "https://spin-api-pba3.onrender.com"
 
 try:
@@ -86,6 +99,9 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         )
 
         zoom.start(self)
+        if self.parent is None:
+            Clock.schedule_once(lambda dt: self.animate_spin(result), 0.05)
+            return
         spin_seq.start(self)
         self._anim = spin_seq
 
@@ -296,6 +312,8 @@ class DiceGameScreen(Screen):
             self._debug(f"[MODE] Online match detected (ID={mid})")
             self._game_active = True
             self._start_online_sync()
+        self._screen_ready = False
+        Clock.schedule_once(lambda dt: setattr(self, "_screen_ready", True), 0.25)
 
     def on_leave(self, *_):
         self._stop_online_sync()
@@ -510,6 +528,11 @@ class DiceGameScreen(Screen):
     def roll_dice(self):
         """Entry point from UI (click) or timers."""
         if not self._game_active:
+            return
+
+        if not getattr(self, "_screen_ready", False):
+            self._debug("[ROLL] Screen not ready; delaying roll trigger.")
+            Clock.schedule_once(lambda dt: self.roll_dice(), 0.05)
             return
 
         if getattr(self, "_roll_inflight", False):
@@ -915,8 +938,9 @@ class DiceGameScreen(Screen):
             self._debug(f"[TOAST][ERR] {e}")
 
     def _animate_dice_and_apply_server(self, data, roll):
-        if "dice_button" in self.ids:
-            self.ids.dice_button.animate_spin(roll)
+        dice = self.ids.get("dice_button")
+        if dice:
+            dice.animate_spin(roll)
         Clock.schedule_once(lambda dt: self._on_server_event(data), 0.8)
 
     # ---------- coins ----------
@@ -968,28 +992,22 @@ class DiceGameScreen(Screen):
 
         Animation.cancel_all(coin)
 
-        h = getattr(box, "height", dp(50))
-        size_px = max(dp(40), min(dp(64), h * 0.9))
-        coin.size = (size_px, size_px)
-
         layer = self._root_float()
-        offsets = {0: -dp(14), 1: 0, 2: dp(14)}
-        stack_x = offsets.get(idx, 0)
-        stack_y = 0
+        tx, ty = self._map_center_to_parent(layer, box)
+
+        coin.size = (dp(44), dp(44))
 
         if reverse:
             start_anchor = self.ids.get("box_0")
             if start_anchor:
-                tx, ty = self._map_center_to_parent(layer, start_anchor)
-                Animation(center=(tx, ty), d=0.5, t="out_quad").start(coin)
+                sx, sy = self._map_center_to_parent(layer, start_anchor)
+                safe_anim(coin, center=(sx, sy), d=0.45, t="out_quad")
                 self._positions[idx] = 0
-                self._debug(f"[REVERSE] Player {idx} reset to start box.")
             else:
                 self._debug("[WARN] box_0 missing; reverse skipped.")
             return
 
-        tx, ty = self._map_center_to_parent(layer, box)
-        Animation(center=(tx + stack_x, ty + stack_y), d=0.5, t="out_quad").start(coin)
+        safe_anim(coin, center=(tx, ty), d=0.45, t="out_quad")
         self._positions[idx] = pos
         self._debug(f"[MOVE] Player {idx} now at {pos}")
 
