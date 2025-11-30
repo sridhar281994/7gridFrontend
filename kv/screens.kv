@@ -56,6 +56,24 @@
                 on_release: root.manager.current = 'register'
 
         Label:
+            id: star1
+            text: "*"
+            font_size: sp(32)
+            color: 1, 1, 0.7, 0.8
+            size_hint: None, None
+            size: dp(30), dp(30)
+            pos_hint: {"x": 0.18, "y": 0.72}
+
+        Label:
+            id: star2
+            text: "*"
+            font_size: sp(28)
+            color: 1, 0.9, 0.6, 0.7
+            size_hint: None, None
+            size: dp(26), dp(26)
+            pos_hint: {"x": 0.72, "y": 0.78}
+
+        Label:
             text: "© 2025 SRTech Games"
             font_size: min(self.width * 0.035, sp(14))
             color: 1, 1, 1, 0.7
@@ -182,7 +200,6 @@
             TextInput:
                 id: name_input
                 hint_text: "Full Name"
-                multiline: False
                 size_hint_y: None
                 height: dp(48)
                 font_size: "18sp"
@@ -193,7 +210,6 @@
                 id: phone_input
                 hint_text: "Phone (10 digits)"
                 input_filter: "int"
-                multiline: False
                 max_text_length: 10
                 size_hint_y: None
                 height: dp(48)
@@ -204,7 +220,6 @@
             TextInput:
                 id: email_input
                 hint_text: "Email"
-                multiline: False
                 size_hint_y: None
                 height: dp(48)
                 font_size: "18sp"
@@ -214,7 +229,6 @@
             TextInput:
                 id: password_input
                 hint_text: "Password"
-                multiline: False
                 password: True
                 size_hint_y: None
                 height: dp(48)
@@ -225,7 +239,6 @@
             TextInput:
                 id: upi_input
                 hint_text: "UPI ID (optional)"
-                multiline: False
                 size_hint_y: None
                 height: dp(48)
                 font_size: "18sp"
@@ -413,8 +426,6 @@
                 source: root.profile_image
                 size_hint: None, None
                 size: dp(45), dp(45)
-                allow_stretch: True
-                keep_ratio: True
 
             Label:
                 id: welcome_label
@@ -487,39 +498,30 @@
                 size_hint_y: None
                 height: dp(45)
                 spacing: dp(10)
-
-                Button:
+                ToggleButton:
                     id: two_player_mode
                     text: "2 Player"
+                    group: "mode"
+                    state: "down"
                     font_size: "15sp"
-                    background_normal: ""
-                    background_color: (0.2, 0.6, 1, 1) if app.selected_mode == 2 else (0.4, 0.4, 0.4, 1)
-                    on_release:
-                        app.selected_mode = 2
-                        two_player_mode.background_color = (0.2, 0.6, 1, 1)
-                        three_player_mode.background_color = (0.4, 0.4, 0.4, 1)
+                    on_release: app.selected_mode = 2
 
-                Button:
+                ToggleButton:
                     id: three_player_mode
                     text: "3 Player"
+                    group: "mode"
                     font_size: "15sp"
-                    background_normal: ""
-                    background_color: (0.2, 0.6, 1, 1) if app.selected_mode == 3 else (0.4, 0.4, 0.4, 1)
-                    on_release:
-                        app.selected_mode = 3
-                        three_player_mode.background_color = (0.2, 0.6, 1, 1)
-                        two_player_mode.background_color = (0.4, 0.4, 0.4, 1)
+                    on_release: app.selected_mode = 3
 
         # Exit App Button (bottom-left)
         Button:
-            text: "LOGOUT"
+            text: "Exit App"
             size_hint: None, None
             size: dp(100), dp(40)
             pos_hint: {"x": 0.03, "y": 0.03}
             font_size: "14sp"
             background_color: 1, 0, 0, 0.8
             on_release: root.confirm_exit()
-
 
 #:import dp kivy.metrics.dp
 #:import sp kivy.metrics.sp
@@ -528,13 +530,13 @@
     name: "usermatch"
 
     FloatLayout:
-        # Background
         canvas.before:
             Color:
-                rgba: 1, 0.6, 0.25, 1   # warm orange
+                rgba: 1, 1, 1, 1
             Rectangle:
                 pos: self.pos
                 size: self.size
+                source: "assets/common.png"
 
         # Player 1
         BoxLayout:
@@ -542,50 +544,29 @@
             orientation: "vertical"
             spacing: dp(4)
             size_hint: None, None
-            size: dp(120), dp(140)
-            pos_hint: {"center_x": 0.5, "top": 0.9}
+            size: dp(100), dp(120)
+            pos_hint: {"center_x": 0.5, "top": 0.88}
 
-            # circular image look using a rounded border mask
-            RelativeLayout:
+            Image:
+                id: portrait_p1
+                source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
-                canvas.before:
-                    Color:
-                        rgba: 1, 1, 1, 1
-                    Ellipse:
-                        pos: self.pos
-                        size: self.size
-                Image:
-                    id: p1_pic
-                    source: "assets/default.png"
-                    allow_stretch: True
-                    keep_ratio: True
-                    size_hint: None, None
-                    size: dp(90), dp(90)
-                    pos_hint: {"center_x": 0.5, "center_y": 0.5}
-                    canvas.before:
-                        PushMatrix
-                        Rotate:
-                            angle: 0
-                            origin: self.center
-                    canvas.after:
-                        PopMatrix
 
             Label:
                 id: p1_name
                 text: root.player1_name
                 font_size: sp(16)
-                color: 0, 0, 0, 1
+                color: 1, 1, 1, 1
                 halign: "center"
                 valign: "middle"
                 text_size: self.size
 
-        # VS Label (center)
         Label:
             text: "VS"
-            font_size: sp(26)
-            color: 0, 0, 0, 1
-            pos_hint: {"center_x": 0.5, "center_y": 0.63}
+            font_size: sp(20)
+            color: 1, 1, 1, 1
+            pos_hint: {"center_x": 0.5, "center_y": 0.64}
 
         # Player 2
         BoxLayout:
@@ -593,135 +574,110 @@
             orientation: "vertical"
             spacing: dp(4)
             size_hint: None, None
-            size: dp(120), dp(140)
-            pos_hint: {"center_x": 0.5, "center_y": 0.45 if root.selected_mode == 3 else 0.3}
+            size: dp(100), dp(120)
+            pos_hint: {"center_x": 0.5, "center_y": 0.45 if root.selected_mode == 3 else 0.27}
 
-            RelativeLayout:
+            Image:
+                id: portrait_p2
+                source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
                 canvas.before:
-                    Color:
-                        rgba: 1, 1, 1, 1
-                    Ellipse:
-                        pos: self.pos
-                        size: self.size
-                Image:
-                    id: p2_pic
-                    source: "assets/default.png"
-                    size_hint: None, None
-                    size: dp(90), dp(90)
-                    allow_stretch: True
-                    keep_ratio: True
-                    pos_hint: {"center_x": 0.5, "center_y": 0.5}
-                    canvas.before:
-                        PushMatrix
-                        Rotate:
-                            angle: root.p2_angle
-                            origin: self.center
-                    canvas.after:
-                        PopMatrix
+                    PushMatrix
+                    Rotate:
+                        angle: root.p2_angle
+                        origin: self.center
+                canvas.after:
+                    PopMatrix
 
             Label:
                 id: p2_name
                 text: root.player2_name
                 font_size: sp(16)
-                color: 0, 0, 0, 1
+                color: 1, 1, 1, 1
                 halign: "center"
                 valign: "middle"
                 text_size: self.size
 
-        # VS for 3-player mode
         Label:
             text: "VS"
-            font_size: sp(22)
-            color: 0, 0, 0, 1
+            font_size: sp(20)
+            color: 1, 1, 1, 1
             pos_hint: {"center_x": 0.5, "center_y": 0.28}
             opacity: 1 if root.selected_mode == 3 else 0
 
-        # Player 3
+        # Player 3 (only for 3-player mode)
         BoxLayout:
             id: p3_box
             orientation: "vertical"
             spacing: dp(4)
             size_hint: None, None
-            size: dp(120), dp(140)
+            size: dp(100), dp(120)
             pos_hint: {"center_x": 0.5, "y": 0.05}
             opacity: 1 if root.selected_mode == 3 else 0
             disabled: False if root.selected_mode == 3 else True
 
-            RelativeLayout:
+            Image:
+                id: portrait_p3
+                source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
                 canvas.before:
-                    Color:
-                        rgba: 1, 1, 1, 1
-                    Ellipse:
-                        pos: self.pos
-                        size: self.size
-                Image:
-                    id: p3_pic
-                    source: "assets/default.png"
-                    size_hint: None, None
-                    size: dp(90), dp(90)
-                    allow_stretch: True
-                    keep_ratio: True
-                    pos_hint: {"center_x": 0.5, "center_y": 0.5}
-                    canvas.before:
-                        PushMatrix
-                        Rotate:
-                            angle: root.p3_angle
-                            origin: self.center
-                    canvas.after:
-                        PopMatrix
+                    PushMatrix
+                    Rotate:
+                        angle: root.p3_angle
+                        origin: self.center
+                canvas.after:
+                    PopMatrix
 
             Label:
                 id: p3_name
                 text: root.player3_name
                 font_size: sp(16)
-                color: 0, 0, 0, 1
+                color: 1, 1, 1, 1
                 halign: "center"
                 valign: "middle"
                 text_size: self.size
 
+# -----------------------------
+# Inline Popup for Free Play
+# -----------------------------
 <BotPromptPopup@Popup>:
     title: "No Match Found"
+    size_hint: None, None
+    size: dp(350), dp(220)
     auto_dismiss: False
     screen: None
-    size_hint: None, None
-    size: (Window.width * 0.85, Window.height * 0.28)
 
     BoxLayout:
         orientation: "vertical"
         spacing: dp(12)
-        padding: [dp(20), dp(16)]
+        padding: dp(16)
 
         Label:
             text: "No players found.\nDo you want to play with bots?"
             halign: "center"
             valign: "middle"
-            color: 1, 1, 1, 1
-            text_size: self.width * 0.9, None
-            font_size: sp(max(14, Window.width * 0.018))
+            color: 1,1,1,1
+            text_size: self.width, None
 
         BoxLayout:
             orientation: "horizontal"
-            spacing: dp(14)
+            spacing: dp(12)
             size_hint_y: None
             height: dp(48)
 
             Button:
                 text: "Yes"
-                font_size: sp(max(13, Window.width * 0.017))
-                background_color: (0, 0.6, 0, 1)
                 on_release:
+                    print("[DEBUG] Yes pressed")
                     root.dismiss()
                     root.screen._fallback_to_bots(root.screen.player1_name)
 
             Button:
                 text: "No"
-                font_size: sp(max(13, Window.width * 0.017))
-                background_color: (0.8, 0, 0, 1)
                 on_release:
+                    print("[DEBUG] No pressed")
                     root.dismiss()
                     root.screen.manager.current = "stage"
 
@@ -729,8 +685,6 @@
 #:import sp kivy.metrics.sp
 
 <ButtonImage@ButtonBehavior+Image>:
-    allow_stretch: True
-    keep_ratio: True
 
 <DiceGameScreen>:
     name: "dicegame"
@@ -808,24 +762,15 @@
                             pos: self.pos
                             size: self.size
 
-        # Player 3 (bottom-right, only if 3 players)
+        # Player 3 (bottom-right)
         BoxLayout:
             orientation: 'horizontal'
             size_hint: None, None
             size: (root.width * 0.35), (root.height * 0.1)
-            pos_hint: {"right": 0.98, "y": 0.03}
+            pos_hint: {"x": 0.65, "y": 0.08}  # slightly raised to make coin visible
             spacing: dp(6)
-            opacity: 1 if root.player3_name else 0
-            disabled: False if root.player3_name else True
-
-            Label:
-                id: p3_name_label
-                text: root.player3_name
-                font_size: sp(15)
-                color: 1, 1, 1, 1
-                size_hint_y: None
-                height: dp(20)
-                pos_hint: {"center_y": 0.9}
+            opacity: 1 if root.player3_name and root._num_players == 3 else 0
+            disabled: False if root.player3_name and root._num_players == 3 else True
 
             RelativeLayout:
                 size_hint: None, None
@@ -845,7 +790,21 @@
                             pos: self.pos
                             size: self.size
 
+            Label:
+                id: p3_name_label
+                text: root.player3_name
+                font_size: sp(15)
+                color: 1, 1, 1, 1
 
+        # Stage label
+        Label:
+            id: stage_label
+            text: root.stage_label
+            font_size: sp(18)
+            color: 1, 1, 1, 1
+            pos_hint: {"top": 0.93, "center_x": 0.5}
+
+        # Dice (bottom-left)
         AnchorLayout:
             anchor_x: "left"
             anchor_y: "bottom"
@@ -927,8 +886,6 @@
                                 size: self.size
                         Image:
                             source: "assets/danger.png"
-                            allow_stretch: True
-                            keep_ratio: True
 
                     Label:
                         id: box_4
@@ -964,8 +921,6 @@
                         id: box_7
                         Image:
                             source: "assets/final.png"
-                            allow_stretch: True
-                            keep_ratio: True
 
         # Coin layer
         FloatLayout:
