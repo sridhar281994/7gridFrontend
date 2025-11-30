@@ -530,7 +530,7 @@
             pos_hint: {"center_x": 0.5, "top": 0.88}
 
             Image:
-                id: p1_pic
+                id: portrait_p1
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
@@ -560,7 +560,7 @@
             pos_hint: {"center_x": 0.5, "center_y": 0.45 if root.selected_mode == 3 else 0.27}
 
             Image:
-                id: p2_pic
+                id: portrait_p2
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
@@ -600,7 +600,7 @@
             disabled: False if root.selected_mode == 3 else True
 
             Image:
-                id: p3_pic
+                id: portrait_p3
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)

@@ -341,14 +341,17 @@ class DiceGameScreen(Screen):
         pids = storage.get_player_ids() if storage else [None, None, None]
         names = [self.player1_name, self.player2_name, self.player3_name]
 
-        if "p1_pic" in self.ids:
-            self.ids.p1_pic.source = self._resolve_avatar_source(0, names[0], pids[0])
-
-        if "p2_pic" in self.ids:
-            self.ids.p2_pic.source = self._resolve_avatar_source(1, names[1], pids[1])
-
-        if self.player3_name and "p3_pic" in self.ids:
-            self.ids.p3_pic.source = self._resolve_avatar_source(2, names[2], pids[2])
+        portrait_map = {
+            "portrait_p1": (0, names[0], pids[0]),
+            "portrait_p2": (1, names[1], pids[1]),
+            "portrait_p3": (2, names[2], pids[2]),
+        }
+        for key, info in portrait_map.items():
+            if key in self.ids:
+                idx, name, pid = info
+                if idx == 2 and not self.player3_name:
+                    continue
+                self.ids[key].source = self._resolve_avatar_source(idx, name, pid)
 
     # ---------- state ----------
     def _reset_game_state(self):
@@ -486,43 +489,57 @@ class DiceGameScreen(Screen):
         return True
 
     # ---------- turn ----------
-    def _highlight_turn(self):
-        """Highlight current player and handle bot/idle timers in offline mode."""
-        p1_overlay = self.ids.get("p1_overlay")
-        p2_overlay = self.ids.get("p2_overlay")
-        p3_overlay = self.ids.get("p3_overlay")
-
-        def pulse(widget, active: bool):
-            if not widget or widget.parent is None:
-                return
-            Animation.cancel_all(widget, "opacity")
-            if active:
-                anim = (
-                    Animation(opacity=0.6, d=1.0, t="in_out_quad")
-                    + Animation(opacity=0.2, d=1.0, t="in_out_quad")
-                )
-                anim.repeat = True
-                anim.start(widget)
-            else:
-                widget.opacity = 0
-
-        pulse(p1_overlay, self._current_player == 0)
-        pulse(p2_overlay, self._current_player == 1)
-        pulse(p3_overlay, self._current_player == 2 and bool(self.player3_name))
+    def _highlight_turn(self, turn_index: int = None):
+        if turn_index is None:
+            turn_index = getattr(self, "_current_player", 0)
+        try:
+            portraits = [
+                self.ids.get("portrait_p1"),
+                self.ids.get("portrait_p2"),
+                self.ids.get("portrait_p3"),
+            ]
+            for idx, wid in enumerate(portraits):
+                if not wid:
+                    continue
+                if idx == turn_index:
+                    wid.color = (1, 0, 0, 1)
+                    wid.opacity = 1
+                else:
+                    wid.color = (1, 1, 1, 1)
+                    wid.opacity = 0.6
+        except Exception as e:
+            self._debug(f"[TURN_HIGHLIGHT_ERROR] {e}")
 
         if self._online:
-            self._debug(f"[TURN][UI] Online turn highlight for player {self._current_player}")
-            self._set_dice_button_enabled(self._current_player == self._my_index and self._current_player >= 0)
+            self._set_dice_button_enabled(
+                turn_index == self._my_index and turn_index is not None and turn_index >= 0
+            )
             return
 
-        # offline
-        if self._current_player != 0:
-            self._debug(f"[BOT TURN] Player {self._current_player} auto-roll soon")
+        if turn_index != 0:
             Clock.schedule_once(lambda dt: self._auto_roll_current(), 0.3)
         else:
-            self._debug("[TIMER] Offline player idle → auto-roll in 10s")
             self._cancel_turn_timer()
             self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
+
+    def _on_turn_change(self, new_turn: int):
+        try:
+            self._current_player = int(new_turn)
+        except Exception:
+            self._current_player = 0
+        self._highlight_turn(self._current_player)
+        self._start_turn_timer(self._current_player)
+
+    def _apply_sync_state(self, data: dict):
+        if not data:
+            return
+        try:
+            turn = int(data.get("turn", getattr(self, "_current_player", 0)))
+            self._positions = data.get("positions") or self._positions
+            self._last_roll = data.get("last_roll")
+            self._on_turn_change(turn)
+        except Exception as e:
+            self._debug(f"[SYNC_APPLY_ERROR] {e}")
 
     # ---------- dice ----------
     def roll_dice(self):
@@ -979,10 +996,10 @@ class DiceGameScreen(Screen):
             coin_img.center = (cx, cy - dp(50))
             coin_img.opacity = 1
 
-        place("p1_pic", self._coins[0], 0)
-        place("p2_pic", self._coins[1], 1)
+        place("portrait_p1", self._coins[0])
+        place("portrait_p2", self._coins[1])
         if self._num_players == 3:
-            place("p3_pic", self._coins[2], 2)
+            place("portrait_p3", self._coins[2])
 
     def _move_coin_to_box(self, idx: int, pos: int, reverse=False):
         box = self.ids.get(f"box_{pos}")
@@ -1117,6 +1134,7 @@ class DiceGameScreen(Screen):
     def _on_server_event(self, payload: dict):
         try:
             self._maybe_update_my_index_from_payload(payload)
+            self._apply_sync_state(payload)
 
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
@@ -1334,13 +1352,19 @@ class DiceGameScreen(Screen):
             self._debug(f"[SYNC][ERR] {e}")
 
     # ---------- Turn timer ----------
-    def _start_turn_timer(self):
+    def _start_turn_timer(self, turn_index: int = None):
         """Backend-verified 10s idle → auto-roll (online), or offline 10s auto-roll for player 0."""
         self._cancel_turn_timer()
 
         if not self._game_active:
             self._debug("[TIMER] Game inactive — timer not started.")
             return
+
+        if turn_index is not None:
+            try:
+                self._current_player = int(turn_index)
+            except Exception:
+                pass
 
         forfeited = getattr(self, "_forfeited_players", set())
         if getattr(self, "_forfeited_players", None) and self._current_player in forfeited:
