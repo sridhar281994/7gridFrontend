@@ -37,14 +37,15 @@ except Exception:
 # Polygon Dice widget
 # ------------------------
 class PolygonDice(ButtonBehavior, RelativeLayout):
+    rotation_angle = NumericProperty(0)
+    scale_value = NumericProperty(1.0)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._rotation_angle = 0
         self._anim = None
         self._dice_image = Image(
             source="assets/dice/dice1.png",
-            allow_stretch=True,
-            keep_ratio=True,
+            size_hint=(1, 1),
         )
         self.add_widget(self._dice_image)
 
@@ -56,6 +57,8 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             PopMatrix()
 
         self.bind(pos=self._update_transform, size=self._update_transform, center=self._update_transform)
+        self.bind(rotation_angle=lambda *_: self._sync_rotation())
+        self.bind(scale_value=lambda *_: self._apply_scale())
 
     def _update_transform(self, *_):
         if hasattr(self, "_rot"):
@@ -63,14 +66,18 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         if hasattr(self, "_scale"):
             self._scale.origin = self.center
 
+    def _apply_scale(self, *_):
+        if hasattr(self, "_scale"):
+            self._scale.x = self._scale.y = float(self.scale_value)
+
     def animate_spin(self, result: int):
         """Animate dice spin, then set the final face image."""
         self.stop_spin()
 
         spin_seq = (
-            Animation(_rotation_angle=360, d=0.25, t="linear")
-            + Animation(_rotation_angle=720, d=0.25, t="linear")
-            + Animation(_rotation_angle=540, d=0.25, t="linear")
+            Animation(rotation_angle=360, d=0.25, t="linear")
+            + Animation(rotation_angle=720, d=0.25, t="linear")
+            + Animation(rotation_angle=540, d=0.25, t="linear")
         )
 
         zoom = (
@@ -78,7 +85,6 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             + Animation(scale_value=1.0, d=0.2, t="out_quad")
         )
 
-        spin_seq.bind(on_progress=lambda *_: self._sync_rotation())
         zoom.start(self)
         spin_seq.start(self)
         self._anim = spin_seq
@@ -90,8 +96,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
                 self._dice_image.reload()
 
             self.stop_spin()
-            self._rotation_angle = 0
-            self._sync_rotation()
+            self.rotation_angle = 0
 
         spin_seq.bind(on_complete=set_final_face)
 
@@ -102,15 +107,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 
     def _sync_rotation(self, *_):
         if hasattr(self, "_rot"):
-            self._rot.angle = self._rotation_angle
-
-    @property
-    def scale_value(self):
-        return self._scale.x
-
-    @scale_value.setter
-    def scale_value(self, value):
-        self._scale.x = self._scale.y = value
+            self._rot.angle = float(self.rotation_angle)
 
 
 # register for KV
