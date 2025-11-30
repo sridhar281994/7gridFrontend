@@ -475,7 +475,7 @@ class DiceGameScreen(Screen):
         p3_overlay = self.ids.get("p3_overlay")
 
         def pulse(widget, active: bool):
-            if not widget:
+            if not widget or widget.parent is None:
                 return
             Animation.cancel_all(widget, "opacity")
             if active:
@@ -963,7 +963,7 @@ class DiceGameScreen(Screen):
     def _move_coin_to_box(self, idx: int, pos: int, reverse=False):
         box = self.ids.get(f"box_{pos}")
         coin = self._coins[idx] if idx < len(self._coins) else None
-        if not box or not coin:
+        if not box or not coin or coin.parent is None:
             return
 
         Animation.cancel_all(coin)
