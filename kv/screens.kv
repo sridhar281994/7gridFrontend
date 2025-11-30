@@ -408,8 +408,6 @@
                 source: root.profile_image
                 size_hint: None, None
                 size: dp(45), dp(45)
-                allow_stretch: True
-                keep_ratio: True
 
             Label:
                 id: welcome_label
@@ -536,8 +534,6 @@
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
-                allow_stretch: True
-                keep_ratio: True
 
             Label:
                 id: p1_name
@@ -568,8 +564,6 @@
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
-                allow_stretch: True
-                keep_ratio: True
                 canvas.before:
                     PushMatrix
                     Rotate:
@@ -610,8 +604,6 @@
                 source: "assets/default.png"
                 size_hint: None, None
                 size: dp(90), dp(90)
-                allow_stretch: True
-                keep_ratio: True
                 canvas.before:
                     PushMatrix
                     Rotate:
@@ -675,8 +667,6 @@
 #:import sp kivy.metrics.sp
 
 <ButtonImage@ButtonBehavior+Image>:
-    allow_stretch: True
-    keep_ratio: True
 
 <DiceGameScreen>:
     name: "dicegame"
@@ -878,8 +868,6 @@
                                 size: self.size
                         Image:
                             source: "assets/danger.png"
-                            allow_stretch: True
-                            keep_ratio: True
 
                     Label:
                         id: box_4
@@ -915,8 +903,6 @@
                         id: box_7
                         Image:
                             source: "assets/final.png"
-                            allow_stretch: True
-                            keep_ratio: True
 
         # Coin layer
         FloatLayout:
