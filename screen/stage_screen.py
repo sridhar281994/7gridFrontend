@@ -3,7 +3,6 @@ from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 from kivy.clock import Clock
 from kivy.graphics import RoundedRectangle, Color
@@ -33,28 +32,27 @@ class StageScreen(Screen):
     def _current_player_name(self) -> str:
         if storage:
             user = storage.get_user() or {}
-            # ✅ Always prefer the full name from backend
             if user.get("name"):
                 return user["name"].strip()
-            # If full name missing but phone exists, use that
             if user.get("phone"):
                 return user["phone"]
-            # Fallback only if both missing
             return "Player"
         return "You"
 
     def on_pre_enter(self, *_):
         self._fetch_wallet_from_backend()
+
         me = self._current_player_name()
         name_lbl = self.ids.get("welcome_label")
         if name_lbl:
             name_lbl.text = me or "Player"
+
         pic = self.ids.get("profile_pic")
         if pic:
             pic.source = self.profile_image
+
         self._load_stakes_from_backend()
 
-        # 🧹 auto abandon unfinished match if needed
         token = storage.get_token() if storage else None
         backend = storage.get_backend_url() if storage else None
         if token and backend:
@@ -97,7 +95,9 @@ class StageScreen(Screen):
                 )
                 if resp.status_code == 200:
                     stakes = resp.json()
-                    Clock.schedule_once(lambda dt: self._populate_stages(stages_box, stakes), 0)
+                    Clock.schedule_once(
+                        lambda dt: self._populate_stages(stages_box, stakes), 0
+                    )
             except Exception as e:
                 print(f"[ERR] Stakes fetch failed: {e}")
 
@@ -110,9 +110,17 @@ class StageScreen(Screen):
         btn_height = self._scale(50)
         fnt = self._font(18)
 
+        app = App.get_running_app()
+        selected_mode = getattr(app, "selected_mode", 2)
+
         for stake in stakes:
+            players = int(stake.get("players", 2))
+            if players != int(selected_mode):
+                continue
+
             label = stake.get("label", f"₹{stake.get('stake_amount', 0)}")
             amount = stake.get("stake_amount", 0)
+
             btn = Button(
                 text=label,
                 size_hint=(None, None),
@@ -128,7 +136,15 @@ class StageScreen(Screen):
                 btn._bg = RoundedRectangle(pos=btn.pos, size=btn.size, radius=[12])
             btn.bind(pos=lambda inst, val: setattr(inst._bg, "pos", inst.pos))
             btn.bind(size=lambda inst, val: setattr(inst._bg, "size", inst.size))
-            btn.bind(on_release=lambda inst, amt=amount: (self.select_stage(amt), self._highlight_selected(inst)))
+
+            # Pass BOTH amount and label so we know if it's ROBOTS Army
+            btn.bind(
+                on_release=lambda inst, amt=amount, lbl=label: (
+                    self.select_stage(amt, lbl),
+                    self._highlight_selected(inst),
+                )
+            )
+
             stages_box.add_widget(btn)
             self._stage_buttons.append(btn)
 
@@ -176,16 +192,19 @@ class StageScreen(Screen):
                     storage.set_user(data)
                     balance = data.get("wallet_balance", 0)
 
-                    # ✅ FIXED: Always prefer full name from DB
                     name = (data.get("name") or "").strip()
                     if not name:
                         name = data.get("phone") or "Player"
 
                     pic_url = data.get("profile_image") or "assets/default.png"
                     self.profile_image = pic_url
-                    Clock.schedule_once(lambda dt: self._update_wallet_label(balance), 0)
+                    Clock.schedule_once(
+                        lambda dt: self._update_wallet_label(balance), 0
+                    )
                     Clock.schedule_once(lambda dt: self._update_name_label(name), 0)
-                    Clock.schedule_once(lambda dt: self._update_profile_pic(pic_url), 0)
+                    Clock.schedule_once(
+                        lambda dt: self._update_profile_pic(pic_url), 0
+                    )
             except Exception as e:
                 print(f"[ERR] Wallet fetch failed: {e}")
 
@@ -206,18 +225,45 @@ class StageScreen(Screen):
         if pic:
             pic.source = pic_url
 
-    def select_stage(self, amount: int):
+    def select_stage(self, amount: int, label: str):
         app = App.get_running_app()
         mode = getattr(app, "selected_mode", 2)
-        App.get_running_app().selected_stake = int(amount)
-        App.get_running_app().selected_mode = mode
+        app.selected_stake = int(amount)
+        app.selected_mode = mode
+
         me = self._current_player_name()
+
+        # ROBOTS Army → offline bots
+        if label.strip().lower() == "robots army":
+            print("[INFO] ROBOTS Army → offline bot mode")
+            if "usermatch" in self.manager.screen_names:
+                match_screen = self.manager.get_screen("usermatch")
+                match_screen.selected_amount = int(amount)
+                match_screen.selected_mode = mode
+                match_screen._fallback_to_bots(me)
+                self.manager.current = "dicegame"
+            else:
+                # Hard fallback if for some reason usermatch screen is missing
+                game_screen = self.manager.get_screen("dicegame")
+                if hasattr(game_screen, "set_stage_and_players"):
+                    if mode == 2:
+                        game_screen.set_stage_and_players(amount, me, "Bot")
+                    else:
+                        game_screen.set_stage_and_players(
+                            amount, me, "Sharp", "Crazy Boy"
+                        )
+                self.manager.current = "dicegame"
+            return
+
+        # All other stages (including Free Play) → ONLINE
         if "usermatch" in self.manager.screen_names:
             match_screen = self.manager.get_screen("usermatch")
             match_screen.selected_amount = int(amount)
             match_screen.selected_mode = mode
             if hasattr(match_screen, "start_matchmaking"):
-                match_screen.start_matchmaking(local_player_name=me, amount=int(amount), mode=mode)
+                match_screen.start_matchmaking(
+                    local_player_name=me, amount=int(amount), mode=mode
+                )
             self.manager.current = "usermatch"
         else:
             game_screen = self.manager.get_screen("dicegame")
@@ -231,22 +277,15 @@ class StageScreen(Screen):
     def go_to_settings(self):
         self.manager.current = "settings"
 
-    def confirm_exit(self):
-        layout = BoxLayout(orientation="vertical", spacing=10, padding=10)
-        layout.add_widget(Label(text="Are you sure you want to exit?"))
-        button_box = BoxLayout(spacing=10, size_hint_y=None, height=self._scale(40))
-        btn_yes = Button(text="Yes", font_size=self._font(15))
-        btn_no = Button(text="No", font_size=self._font(15))
-        button_box.add_widget(btn_yes)
-        button_box.add_widget(btn_no)
-        layout.add_widget(button_box)
-        popup = Popup(
-            title="Exit Confirmation",
-            content=layout,
-            size_hint=(None, None),
-            size=(self._scale(300), self._scale(180)),
-            auto_dismiss=False,
-        )
-        btn_yes.bind(on_release=lambda *_: (popup.dismiss(), App.get_running_app().stop()))
-        btn_no.bind(on_release=popup.dismiss)
-        popup.open()
+    def logout_to_login(self):
+        """Clear local session data and send the user back to login."""
+        if storage:
+            storage.clear_all()
+
+        app = App.get_running_app()
+        for attr in ("user_token", "user_id", "selected_stake"):
+            if hasattr(app, attr):
+                setattr(app, attr, None)
+
+        if self.manager:
+            self.manager.current = "login"
