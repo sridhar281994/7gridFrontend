@@ -202,6 +202,29 @@ class WalletActionsMixin:
 
         self._run_async(worker)
 
+    # ------------------ Wallet Portal ------------------
+    def open_wallet_portal(self):
+        wallet_url = "https://wallet.srtech.co.in"
+        if storage and hasattr(storage, "get_wallet_url"):
+            try:
+                fetched = storage.get_wallet_url()
+                if fetched:
+                    wallet_url = fetched
+            except Exception:
+                pass
+
+        if not wallet_url:
+            self.show_popup("Error", "Wallet portal missing")
+            return
+
+        try:
+            opened = webbrowser.open(wallet_url, new=2, autoraise=True)
+            if not opened:
+                raise RuntimeError("Browser refused to open link")
+            self.show_popup("Info", "Opening wallet site", wallet_url)
+        except Exception as err:
+            self.show_popup("Error", "Wallet open fail", str(err))
+
     # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):
         token, backend = self._auth_pair()
