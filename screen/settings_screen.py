@@ -167,15 +167,15 @@ class SettingsScreen(Screen):
 
         # determine whether UPI change needs OTP
         if self._upi_changed(payload):
-            phone_for_otp = self._get_user_phone()
-            if not phone_for_otp:
-                self.show_popup("Error", "Add a verified phone number before updating payment info.")
+            raw_phone = self._get_user_phone()
+            otp_phone = self._sanitize_phone_for_otp(raw_phone)
+            if otp_phone:
+                self._prompt_payment_otp(payload, otp_phone, token, backend)
                 return
-            if not phone_for_otp.isdigit():
-                self.show_popup("Error", "Phone number should contain digits only for OTP verification.")
+            if raw_phone:
+                self.show_popup("Error", "Enter a valid phone number (digits only) to receive OTP.")
                 return
-            self._prompt_payment_otp(payload, phone_for_otp, token, backend)
-            return
+            # No verified phone on file: skip OTP and let backend decide.
 
         self._submit_settings(payload, token, backend)
 
@@ -339,6 +339,13 @@ class SettingsScreen(Screen):
         if phone_input:
             return phone_input.text.strip()
         return ""
+
+    @staticmethod
+    def _sanitize_phone_for_otp(phone: str) -> str:
+        if not phone:
+            return ""
+        digits_only = "".join(ch for ch in phone if ch.isdigit())
+        return digits_only if len(digits_only) >= 6 else ""
 
     def _extract_phone(self, user: dict) -> str:
         if not isinstance(user, dict):
