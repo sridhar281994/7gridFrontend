@@ -47,9 +47,28 @@ def set_user(user: dict):
     if not isinstance(user, dict):
         return
 
+    phone_value = _extract_phone(user)
+    if phone_value:
+        user["phone"] = phone_value
+        aliases = [
+            "phone_number",
+            "phoneNumber",
+            "phone_no",
+            "mobile",
+            "mobile_number",
+            "mobileNumber",
+            "mobile_no",
+            "contact_phone",
+            "contactPhone",
+            "contact",
+        ]
+        for alias in aliases:
+            if not user.get(alias):
+                user[alias] = phone_value
+
     name = (user.get("name") or "").strip()
     email = user.get("email")
-    phone = user.get("phone")
+    phone = phone_value
 
     if name:
         user["display_name"] = name
@@ -65,6 +84,27 @@ def set_user(user: dict):
 
 def get_user() -> Optional[dict]:
     return _state.get("user")
+
+
+def _extract_phone(user: dict) -> str:
+    candidates = [
+        "phone",
+        "phone_number",
+        "phoneNumber",
+        "phone_no",
+        "mobile",
+        "mobile_number",
+        "mobileNumber",
+        "mobile_no",
+        "contact_phone",
+        "contactPhone",
+        "contact",
+    ]
+    for key in candidates:
+        value = user.get(key)
+        if value:
+            return str(value).strip()
+    return ""
 
 
 def get_display_name() -> str:
