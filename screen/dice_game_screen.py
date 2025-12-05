@@ -37,14 +37,15 @@ except Exception:
 # Polygon Dice widget
 # ------------------------
 class PolygonDice(ButtonBehavior, RelativeLayout):
+    rotation_angle = NumericProperty(0)
+    scale_value = NumericProperty(1.0)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._rotation_angle = 0
         self._anim = None
         self._dice_image = Image(
             source="assets/dice/dice1.png",
-            allow_stretch=True,
-            keep_ratio=True,
+            size_hint=(1, 1),
         )
         self.add_widget(self._dice_image)
 
@@ -56,6 +57,8 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             PopMatrix()
 
         self.bind(pos=self._update_transform, size=self._update_transform, center=self._update_transform)
+        self.bind(rotation_angle=lambda *_: self._sync_rotation())
+        self.bind(scale_value=lambda *_: self._apply_scale())
 
     def _update_transform(self, *_):
         if hasattr(self, "_rot"):
@@ -63,14 +66,18 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         if hasattr(self, "_scale"):
             self._scale.origin = self.center
 
+    def _apply_scale(self, *_):
+        if hasattr(self, "_scale"):
+            self._scale.x = self._scale.y = float(self.scale_value)
+
     def animate_spin(self, result: int):
         """Animate dice spin, then set the final face image."""
         self.stop_spin()
 
         spin_seq = (
-            Animation(_rotation_angle=360, d=0.25, t="linear")
-            + Animation(_rotation_angle=720, d=0.25, t="linear")
-            + Animation(_rotation_angle=540, d=0.25, t="linear")
+            Animation(rotation_angle=360, d=0.25, t="linear")
+            + Animation(rotation_angle=720, d=0.25, t="linear")
+            + Animation(rotation_angle=540, d=0.25, t="linear")
         )
 
         zoom = (
@@ -78,7 +85,6 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             + Animation(scale_value=1.0, d=0.2, t="out_quad")
         )
 
-        spin_seq.bind(on_progress=lambda *_: self._sync_rotation())
         zoom.start(self)
         spin_seq.start(self)
         self._anim = spin_seq
@@ -90,8 +96,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
                 self._dice_image.reload()
 
             self.stop_spin()
-            self._rotation_angle = 0
-            self._sync_rotation()
+            self.rotation_angle = 0
 
         spin_seq.bind(on_complete=set_final_face)
 
@@ -102,15 +107,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 
     def _sync_rotation(self, *_):
         if hasattr(self, "_rot"):
-            self._rot.angle = self._rotation_angle
-
-    @property
-    def scale_value(self):
-        return self._scale.x
-
-    @scale_value.setter
-    def scale_value(self, value):
-        self._scale.x = self._scale.y = value
+            self._rot.angle = float(self.rotation_angle)
 
 
 # register for KV
@@ -121,6 +118,16 @@ Factory.register("PolygonDice", cls=PolygonDice)
 # Dice Game Screen
 # ------------------------
 class DiceGameScreen(Screen):
+    def sync_initial_turn(self, turn):
+        try:
+            self._current_player = int(turn)
+            self._server_turn = int(turn)
+        except Exception:
+            self._current_player = 0
+        self._roll_inflight = False
+        self._last_roll_time = 0
+        self._highlight_turn()
+
     dice_result = StringProperty("")
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
@@ -149,11 +156,16 @@ class DiceGameScreen(Screen):
         self.match_id = None
 
         # state helpers
-        self._my_index = 0
+        self._my_index = None
         self._roll_inflight = False
         self._last_roll_seen = None
         self._last_state_sig = None  # (positions tuple, last_roll, turn)
         self._last_roll_animated = None
+        self._forfeited_players = set()
+        self._first_turn_synced = False
+        self._auto_from_timer = False
+        self._last_roll_time = 0
+        self._server_turn = None
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -203,6 +215,42 @@ class DiceGameScreen(Screen):
             print(msg)
         except Exception:
             pass
+
+    def _set_dice_button_enabled(self, enabled: bool):
+        btn = self.ids.get("dice_button")
+        if not btn:
+            Clock.schedule_once(lambda dt: self._set_dice_button_enabled(enabled), 0.1)
+            return
+        try:
+            btn.disabled = not enabled
+            btn.opacity = 1.0 if enabled else 0.6
+        except Exception:
+            pass
+
+    def _mark_roll_start(self, source: str = "manual"):
+        self._roll_inflight = True
+        self._roll_locked = True
+        self._roll_source = source
+        self._set_dice_button_enabled(False)
+
+    def _mark_roll_end(self):
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._roll_source = None
+        self._set_dice_button_enabled(True)
+
+    def _mark_roll_start(self, source: str = "manual"):
+        self._roll_inflight = True
+        self._roll_locked = True
+        self._roll_source = source
+        self._set_dice_button_enabled(False)
+
+    def _mark_roll_end(self):
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._roll_source = None
+        self._set_dice_button_enabled(True)
+        self._highlight_turn()
 
     # ---------- lifecycle ----------
     def on_pre_enter(self, *_):
@@ -292,6 +340,25 @@ class DiceGameScreen(Screen):
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        if hasattr(self, "_forfeited_players"):
+            self._forfeited_players.clear()
+        else:
+            self._forfeited_players = set()
+
+        # reset volatile flags for new sessions to avoid stale turn/lock state
+        self._first_turn_synced = False
+        self._auto_from_timer = False
+        self._roll_inflight = False
+        self._roll_locked = False
+        self._last_roll_time = 0
+
+        # restore any portraits/coins that might have been hidden due to previous forfeits
+        for idx in range(3):
+            pic = self.ids.get(f"p{idx + 1}_pic")
+            if pic:
+                pic.opacity = 1
+            if idx < len(self._coins) and self._coins[idx]:
+                self._coins[idx].opacity = 1
 
         forfeited = getattr(self, "_forfeited_players", set())
         active_players = [i for i in range(self._num_players) if i not in forfeited]
@@ -300,7 +367,15 @@ class DiceGameScreen(Screen):
             self._game_active = False
             return
 
-        self._current_player = active_players[0]
+        # start turn handling
+        if self._online:
+            self._current_player = -1  # wait for backend sync
+            self._set_dice_button_enabled(False)
+        else:
+            try:
+                self._current_player = random.choice(active_players)
+            except Exception:
+                self._current_player = active_players[0]
         self._place_coins_near_portraits()
         self._highlight_turn()
 
@@ -333,19 +408,64 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
     def _resolve_my_index(self):
+        fallback_idx = 0 if not self._online else None
         try:
-            uid = (storage.get_user() or {}).get("id") if storage else None
+            # Prefer stored slot if matchmaking recorded it.
+            stored_idx = storage.get_my_player_index() if storage else None
+            num_players = storage.get_num_players() if storage else self._num_players
+            if isinstance(stored_idx, int) and 0 <= stored_idx < (num_players or self._num_players):
+                self._my_index = stored_idx
+                return
+
+            user = storage.get_user() if storage else None
+            uid = None
+            if isinstance(user, dict):
+                uid = user.get("id") or user.get("_id")
+
             pids = storage.get_player_ids() if storage else []
-            num = storage.get_num_players() or self._num_players
-            for i, pid in enumerate((pids or [])[:num]):
-                if pid is not None and pid == uid:
-                    self._my_index = i
-                    break
-            else:
-                self._my_index = 0
+            num = num_players or self._num_players
+            if uid is not None:
+                for i, pid in enumerate((pids or [])[:num]):
+                    if pid is not None and str(pid) == str(uid):
+                        self._my_index = i
+                        if storage:
+                            storage.set_my_player_index(i)
+                        return
+
         except Exception as e:
             print(f"[INDEX][WARN] resolve failed: {e}")
-            self._my_index = 0
+            fallback_idx = 0
+
+        self._my_index = fallback_idx
+        if fallback_idx is not None and storage:
+            storage.set_my_player_index(fallback_idx)
+
+    def _resolve_index_from_ids(self, ids):
+        if not storage or not isinstance(ids, (list, tuple)):
+            return None
+        uid = (storage.get_user() or {}).get("id")
+        if uid is None:
+            return None
+        for idx, pid in enumerate(ids):
+            if pid is not None and str(pid) == str(uid):
+                return idx
+        return None
+
+    def _maybe_update_my_index_from_payload(self, payload, trusted: bool = False):
+        if not payload:
+            return False
+        idx = self._resolve_index_from_ids(payload.get("player_ids"))
+        if idx is None and trusted and payload.get("player_index") is not None:
+            try:
+                idx = int(payload.get("player_index"))
+            except (TypeError, ValueError):
+                idx = None
+        if idx is None:
+            return False
+        self._my_index = idx
+        if storage:
+            storage.set_my_player_index(idx)
+        return True
 
     # ---------- turn ----------
     def _highlight_turn(self):
@@ -355,7 +475,7 @@ class DiceGameScreen(Screen):
         p3_overlay = self.ids.get("p3_overlay")
 
         def pulse(widget, active: bool):
-            if not widget:
+            if not widget or widget.parent is None:
                 return
             Animation.cancel_all(widget, "opacity")
             if active:
@@ -374,6 +494,7 @@ class DiceGameScreen(Screen):
 
         if self._online:
             self._debug(f"[TURN][UI] Online turn highlight for player {self._current_player}")
+            self._set_dice_button_enabled(self._current_player == self._my_index and self._current_player >= 0)
             return
 
         # offline
@@ -391,6 +512,13 @@ class DiceGameScreen(Screen):
         if not self._game_active:
             return
 
+        if getattr(self, "_roll_inflight", False):
+            self._debug("[ROLL] Blocked — roll already processing.")
+            return
+
+        # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
+        self._cancel_turn_timer()
+
         now = time.time()
         if hasattr(self, "_last_roll_time") and now - getattr(self, "_last_roll_time", 0) < 1.5:
             self._debug("[ROLL] Ignoring duplicate roll trigger within 1.5s window.")
@@ -398,26 +526,26 @@ class DiceGameScreen(Screen):
         self._last_roll_time = now
 
         if not self._online:
-            if getattr(self, "_roll_inflight", False):
-                return
-            self._roll_locked = False
             if self._current_player != 0:
                 self._show_temp_popup("Not your turn!", duration=1.8)
                 return
 
-            self._roll_locked = True
-            self._roll_inflight = True
+            self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
             Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
-            Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 1.0)
-            Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 1.0)
+            Clock.schedule_once(lambda dt: self._mark_roll_end(), 1.0)
             return
 
         # ONLINE
         if not self.match_id or not self._token():
             self._debug("[ROLL] Missing match_id or token — aborting online roll.")
+            return
+
+        if self._my_index is None:
+            self._debug("[ROLL] Waiting for player index sync before rolling.")
+            self._sync_remote_turn("no-player-index")
             return
 
         if not getattr(self, "_first_turn_synced", False):
@@ -431,7 +559,9 @@ class DiceGameScreen(Screen):
                     verify=False,
                 )
                 if resp.status_code == 200:
-                    srv_turn = resp.json().get("turn")
+                    data = resp.json()
+                    self._maybe_update_my_index_from_payload(data)
+                    srv_turn = data.get("turn")
                     if srv_turn is not None:
                         self._current_player = int(srv_turn)
             except Exception as e:
@@ -442,12 +572,34 @@ class DiceGameScreen(Screen):
                 self._show_temp_popup("Not your turn!", duration=1.8)
             return
 
-        if getattr(self, "_roll_inflight", False):
-            self._debug("[ROLL] Ignored — already in flight.")
-            return
+        # final verification with backend to avoid stale turn state
+        try:
+            resp = requests.get(
+                f"{self._backend()}/matches/check",
+                headers={"Authorization": f"Bearer {self._token()}"},
+                params={"match_id": self.match_id},
+                timeout=5,
+                verify=False,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self._maybe_update_my_index_from_payload(data, trusted=True)
+                srv_turn = data.get("turn")
+                if srv_turn is not None:
+                    self._current_player = int(srv_turn)
+                if self._current_player != self._my_index:
+                    self._debug("[ROLL] Aborted — backend reports different turn.")
+                    self._mark_roll_end()
+                    self._set_dice_button_enabled(False)
+                    if not getattr(self, "_auto_from_timer", False):
+                        self._show_temp_popup("Not your turn!", duration=1.5)
+                    return
+        except Exception as e:
+            self._debug(f"[ROLL][VERIFY][ERR] {e}")
+            # fallback to previous state; continue rolling
 
-        self._roll_locked = False
-        self._roll_inflight = True
+        source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
+        self._mark_roll_start(source)
 
         def worker():
             try:
@@ -460,6 +612,7 @@ class DiceGameScreen(Screen):
                 )
                 if resp.status_code == 200:
                     data = resp.json()
+                    self._maybe_update_my_index_from_payload(data, trusted=True)
                     roll_val = int(data.get("roll") or 1)
                     Clock.schedule_once(
                         lambda dt: self._animate_dice_and_apply_server(data, roll_val), 0
@@ -469,17 +622,16 @@ class DiceGameScreen(Screen):
                     self._debug("[TURN] Server rejected roll — not your turn.")
                     if not getattr(self, "_auto_from_timer", False):
                         self._show_temp_popup("Not your turn!", duration=1.5)
-                    Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0)
-                    Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0)
+                    Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
+                    Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
                     return
 
                 elif resp.status_code == 400 and "Match not active" in resp.text:
                     self._debug("[ROLL] Match not active — stopping game & timers.")
                     self._game_active = False
                     self._cancel_turn_timer()
-                    self._roll_inflight = False
-                    self._roll_locked = False
+                    self._mark_roll_end()
                     return
 
                 else:
@@ -489,8 +641,7 @@ class DiceGameScreen(Screen):
                 self._debug(f"[ROLL][ERR] {e}")
 
             finally:
-                Clock.schedule_once(lambda dt: setattr(self, "_roll_inflight", False), 0.1)
-                Clock.schedule_once(lambda dt: setattr(self, "_roll_locked", False), 0.1)
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
                 Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0.1)
                 if getattr(self, "_auto_from_timer", False):
                     Clock.schedule_once(lambda dt: setattr(self, "_auto_from_timer", False), 0)
@@ -717,6 +868,11 @@ class DiceGameScreen(Screen):
 
     # ---------- toast ----------
     def _show_temp_popup(self, msg: str, duration: float = 2.0):
+        # ensure popup interactions always run on the main/UI thread
+        if threading.current_thread() is not threading.main_thread():
+            Clock.schedule_once(lambda dt: self._show_temp_popup(msg, duration), 0)
+            return
+
         try:
             if not hasattr(self, "_toast_popup") or self._toast_popup is None:
                 layout = BoxLayout(orientation="vertical", spacing=8, padding=(14, 12, 14, 12))
@@ -807,7 +963,7 @@ class DiceGameScreen(Screen):
     def _move_coin_to_box(self, idx: int, pos: int, reverse=False):
         box = self.ids.get(f"box_{pos}")
         coin = self._coins[idx] if idx < len(self._coins) else None
-        if not box or not coin:
+        if not box or not coin or coin.parent is None:
             return
 
         Animation.cancel_all(coin)
@@ -851,12 +1007,15 @@ class DiceGameScreen(Screen):
         self._last_roll_seen = None
         self._last_state_sig = None
         self._last_roll_animated = None
+        self._first_turn_synced = False
         if WEBSOCKET_OK:
             self._ws_stop.clear()
             self._ws_thread = threading.Thread(target=self._ws_worker, daemon=True)
             self._ws_thread.start()
         else:
             self._poll_ev = Clock.schedule_interval(lambda dt: self._poll_state_once(), 0.9)
+        # ensure we have the latest state immediately
+        self._sync_remote_turn("start-sync", trusted=True)
 
     def _stop_online_sync(self):
         if self._ws:
@@ -911,9 +1070,36 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[POLL][ERR] {e}")
 
+    def _sync_remote_turn(self, reason: str = "", trusted: bool = False):
+        """Force-refresh state from backend (used after 409 or manual resync)."""
+        if not self._online or not self.match_id or not self._token():
+            return
+
+        self._debug(f"[SYNC][REFRESH] Triggered ({reason or 'unspecified'})")
+
+        def worker():
+            try:
+                resp = requests.get(
+                    f"{self._backend()}/matches/check",
+                    headers={"Authorization": f"Bearer {self._token()}"},
+                    params={"match_id": self.match_id},
+                    timeout=6,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self._maybe_update_my_index_from_payload(data, trusted=trusted)
+                    Clock.schedule_once(lambda dt: self._on_server_event(data), 0)
+            except Exception as e:
+                self._debug(f"[SYNC][REFRESH][ERR] {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # ---------- core server event handler ----------
     def _on_server_event(self, payload: dict):
         try:
+            self._maybe_update_my_index_from_payload(payload)
+
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
             # =====================================================================
@@ -978,6 +1164,11 @@ class DiceGameScreen(Screen):
             roll = payload.get("last_roll")
             actor = payload.get("actor")
             turn = payload.get("turn")
+            if turn is not None:
+                try:
+                    self._server_turn = int(turn)
+                except Exception:
+                    pass
             spawn = payload.get("spawn", False)
             forfeit_actor = payload.get("forfeit_actor")
 
@@ -1180,6 +1371,15 @@ class DiceGameScreen(Screen):
         if not self._online or not self._game_active:
             return
 
+        if self._my_index is None:
+            self._debug("[AUTO-ROLL] Aborted — player index unknown.")
+            self._sync_remote_turn("auto-no-index")
+            return
+
+        if getattr(self, "_roll_inflight", False):
+            self._debug("[AUTO-ROLL] Aborted — roll already in flight.")
+            return
+
         forfeited = getattr(self, "_forfeited_players", set())
         if self._my_index in forfeited:
             self._debug(f"[AUTO-ROLL] Skip (forfeited player {self._my_index})")
@@ -1205,6 +1405,7 @@ class DiceGameScreen(Screen):
                 return
 
             data = resp.json()
+            self._maybe_update_my_index_from_payload(data, trusted=True)
             srv_turn = int(data.get("turn", -1))
             if srv_turn != self._my_index or srv_turn in forfeited:
                 self._debug(
@@ -1217,17 +1418,7 @@ class DiceGameScreen(Screen):
 
         self._debug(f"[AUTO-ROLL] confirmed auto-roll for player {self._my_index}")
         self._auto_from_timer = True
-        self._roll_locked = False
-        self._roll_inflight = False
-
-        try:
-            if "dice_button" in self.ids:
-                dummy = random.randint(1, 6)
-                self.ids.dice_button.animate_spin(dummy)
-        except Exception:
-            pass
-
-        Clock.schedule_once(lambda dt: self.roll_dice(), 0.5)
+        Clock.schedule_once(lambda dt: self.roll_dice(), 0.1)
 
     def _cancel_turn_timer(self):
         if hasattr(self, "_turn_timer") and self._turn_timer:
@@ -1288,8 +1479,7 @@ class DiceGameScreen(Screen):
 
     def _unlock_and_continue(self):
         try:
-            self._roll_locked = False
-            self._roll_inflight = False
+            self._mark_roll_end()
             self._end_turn_pending = False
             self._cancel_turn_timer()
 
