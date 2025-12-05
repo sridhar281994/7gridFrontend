@@ -29,6 +29,8 @@ class SettingsScreen(Screen):
         super().__init__(**kwargs)
         self._original_upi = ""
         self._otp_payload = None
+        self._cached_phone = ""
+        self._phone_refresh_inflight = False
 
     def on_pre_enter(self):
         if not hasattr(self, "sound"):
@@ -167,15 +169,8 @@ class SettingsScreen(Screen):
 
         # determine whether UPI change needs OTP
         if self._upi_changed(payload):
-            raw_phone = self._get_user_phone()
-            otp_phone = self._sanitize_phone_for_otp(raw_phone)
-            if otp_phone:
-                self._prompt_payment_otp(payload, otp_phone, token, backend)
-                return
-            if raw_phone:
-                self.show_popup("Error", "Enter a valid phone number (digits only) to receive OTP.")
-                return
-            # No verified phone on file: skip OTP and let backend decide.
+            self._handle_upi_payment_change(payload, token, backend)
+            return
 
         self._submit_settings(payload, token, backend)
 
@@ -185,6 +180,63 @@ class SettingsScreen(Screen):
         user = storage.get_user() if storage else None
         original = (user or {}).get("upi_id") or self._original_upi or ""
         return payload["upi_id"].strip() != original.strip()
+
+    def _handle_upi_payment_change(self, payload, token, backend):
+        raw_phone = self._get_user_phone()
+        otp_phone = self._sanitize_phone_for_otp(raw_phone)
+        if otp_phone:
+            self._prompt_payment_otp(payload, otp_phone, token, backend)
+            return
+        if raw_phone:
+            self.show_popup("Error", "Enter a valid phone number (digits only) to receive OTP.")
+            return
+        self._refresh_phone_and_retry(payload, token, backend)
+
+    def _refresh_phone_and_retry(self, payload, token, backend):
+        if self._phone_refresh_inflight:
+            self.show_popup("Info", "Fetching phone number from server. Please try again shortly.")
+            return
+        if not (token and backend):
+            self.show_popup("Error", "Missing session information. Please login again.")
+            return
+
+        self._phone_refresh_inflight = True
+
+        def worker():
+            fetched_phone = ""
+            error_msg = ""
+            try:
+                resp = requests.get(
+                    f"{backend}/users/me",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    user = resp.json()
+                    fetched_phone = self._extract_phone(user)
+                    if storage:
+                        storage.set_user(user)
+                    Clock.schedule_once(lambda dt: self._apply_user_inputs(user), 0)
+                else:
+                    error_msg = resp.text or f"HTTP {resp.status_code}"
+            except Exception as exc:
+                error_msg = str(exc)
+
+            def finish(_dt):
+                self._phone_refresh_inflight = False
+                otp_phone = self._sanitize_phone_for_otp(fetched_phone)
+                if otp_phone:
+                    self._prompt_payment_otp(payload, otp_phone, token, backend)
+                else:
+                    if error_msg:
+                        self.show_popup("Error", f"Unable to refresh phone info: {error_msg}")
+                    else:
+                        self.show_popup("Error", "Add a verified phone number before updating payment info.")
+
+            Clock.schedule_once(finish, 0)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _prompt_payment_otp(self, payload, phone, token, backend):
         otp_input = TextInput(
@@ -316,6 +368,9 @@ class SettingsScreen(Screen):
         if not user:
             return
         self._original_upi = user.get("upi_id") or ""
+        phone_value = self._extract_phone(user)
+        if phone_value:
+            self._cached_phone = phone_value
 
         def updater(_dt):
             if self.ids.get("name_input"):
@@ -325,19 +380,25 @@ class SettingsScreen(Screen):
             if self.ids.get("desc_input"):
                 self.ids.desc_input.text = user.get("description") or ""
             if self.ids.get("phone_input"):
-                self.ids.phone_input.text = self._extract_phone(user)
+                self.ids.phone_input.text = self._cached_phone
 
         Clock.schedule_once(updater, 0)
 
     def _get_user_phone(self):
+        if self._cached_phone:
+            return self._cached_phone
         if storage:
             user = storage.get_user() or {}
             phone = self._extract_phone(user)
             if phone:
+                self._cached_phone = phone
                 return phone
         phone_input = self.ids.get("phone_input")
         if phone_input:
-            return phone_input.text.strip()
+            phone = phone_input.text.strip()
+            if phone:
+                self._cached_phone = phone
+            return phone
         return ""
 
     @staticmethod
@@ -345,7 +406,7 @@ class SettingsScreen(Screen):
         if not phone:
             return ""
         digits_only = "".join(ch for ch in phone if ch.isdigit())
-        return digits_only if len(digits_only) >= 6 else ""
+        return digits_only if len(digits_only) >= 10 else ""
 
     def _extract_phone(self, user: dict) -> str:
         if not isinstance(user, dict):
