@@ -125,22 +125,12 @@
                     valign: "middle"
                     text_size: self.width, None
                     size_hint_y: None
-                    height: self.texture_size[1] + dp(6)
-
-                Label:
-                    text: "Welcome back! Please confirm your details below."
-                    font_size: sp(16)
-                    color: 1, 1, 1, 0.8
-                    halign: "center"
-                    valign: "middle"
-                    text_size: self.width - dp(40), None
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(8)
+                    height: self.texture_size[1] + dp(10)
 
                 BoxLayout:
                     orientation: "vertical"
                     size_hint_y: None
-                    height: dp(220)
+                    height: dp(260)
                     padding: dp(16)
                     spacing: dp(12)
                     canvas.before:
@@ -195,26 +185,15 @@
                             color: (0.1, 0.2, 0.35, 1)
                             on_state: password_input.cursor = password_input.cursor  # force refresh
 
-                BoxLayout:
-                    orientation: "vertical"
-                    size_hint_y: None
-                    height: dp(180)
-                    padding: dp(16)
-                    spacing: dp(10)
-                    canvas.before:
-                        Color:
-                            rgba: 0.15, 0.25, 0.38, 0.82
-                        RoundedRectangle:
-                            pos: self.pos
-                            size: self.size
-                            radius: [18]
-
-                    Label:
-                        text: "Email OTP"
-                        font_size: sp(17)
-                        color: 1, 1, 1, 0.9
+                    Button:
+                        text: "Request OTP"
                         size_hint_y: None
-                        height: self.texture_size[1] + dp(4)
+                        height: dp(46)
+                        font_size: sp(17)
+                        background_normal: ""
+                        background_color: (0.96, 0.58, 0.17, 1)
+                        color: (0.1, 0.05, 0.02, 1)
+                        on_release: root.send_otp_to_user()
 
                     TextInput:
                         id: otp_input
@@ -226,16 +205,6 @@
                         background_color: (0.92, 0.98, 0.95, 0.95)
                         foreground_color: (0.09, 0.1, 0.14, 1)
                         padding: [dp(14), dp(12), dp(14), dp(12)]
-
-                    Button:
-                        text: "Request OTP"
-                        size_hint_y: None
-                        height: dp(46)
-                        font_size: sp(17)
-                        background_normal: ""
-                        background_color: (0.96, 0.58, 0.17, 1)
-                        color: (0.1, 0.05, 0.02, 1)
-                        on_release: root.send_otp_to_user()
 
                 BoxLayout:
                     orientation: "vertical"
@@ -819,20 +788,26 @@
                         Label:
                             id: welcome_label
                             text: ""
-                            font_size: sp(18)
+                            font_size: sp(16)
                             color: 1, 1, 1, 1
                             halign: "left"
                             valign: "middle"
-                            text_size: self.size
+                            text_size: self.width, None
+                            shorten: True
+                            shorten_from: "right"
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(4)
 
                         Label:
                             id: description_label
                             text: root.player_description or "Describe yourself"
-                            font_size: sp(14)
+                            font_size: sp(12)
                             color: 1, 1, 1, 0.85
                             halign: "left"
                             valign: "middle"
-                            text_size: self.size
+                            text_size: self.width, None
+                            size_hint_y: None
+                            height: min(self.texture_size[1] + dp(4), dp(48))
 
                 Label:
                     id: wallet_label
