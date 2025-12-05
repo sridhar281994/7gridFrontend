@@ -290,13 +290,19 @@ class UserMatchScreen(Screen):
                 my_idx = self._resolve_my_index_from_payload(data, trusted=True)
             storage.set_my_player_index(my_idx if my_idx is not None else 0)
 
-        Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.1)
+        Clock.schedule_once(lambda dt: game._place_coins_near_portraits(), 0.15)
         self.manager.current = "dicegame"
 
         if hasattr(storage, "set_initial_turn"):
             storage.set_initial_turn(int(turn))
         if hasattr(game, "sync_initial_turn"):
             Clock.schedule_once(lambda dt: game.sync_initial_turn(turn), 0.2)
+        if hasattr(game, "_screen_ready"):
+            try:
+                setattr(game, "_screen_ready", False)
+                Clock.schedule_once(lambda dt: setattr(game, "_screen_ready", True), 0.3)
+            except Exception:
+                pass
 
     # -------------------------
     # Poll match ready
