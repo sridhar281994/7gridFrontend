@@ -18,6 +18,7 @@ except Exception:
 
 class StageScreen(Screen):
     profile_image = StringProperty("assets/default.png")
+    player_description = StringProperty("Describe yourself")
 
     def _scale(self, base: float) -> float:
         w, h = Window.size
@@ -46,6 +47,10 @@ class StageScreen(Screen):
         name_lbl = self.ids.get("welcome_label")
         if name_lbl:
             name_lbl.text = me or "Player"
+
+        cached_user = storage.get_user() if storage else None
+        if cached_user:
+            self._set_player_description(cached_user.get("description"))
 
         pic = self.ids.get("profile_pic")
         if pic:
@@ -197,6 +202,7 @@ class StageScreen(Screen):
                         name = data.get("phone") or "Player"
 
                     pic_url = data.get("profile_image") or "assets/default.png"
+                    description = data.get("description")
                     self.profile_image = pic_url
                     Clock.schedule_once(
                         lambda dt: self._update_wallet_label(balance), 0
@@ -204,6 +210,10 @@ class StageScreen(Screen):
                     Clock.schedule_once(lambda dt: self._update_name_label(name), 0)
                     Clock.schedule_once(
                         lambda dt: self._update_profile_pic(pic_url), 0
+                    )
+                    Clock.schedule_once(
+                        lambda dt, desc=description: self._set_player_description(desc),
+                        0,
                     )
             except Exception as e:
                 print(f"[ERR] Wallet fetch failed: {e}")
@@ -230,6 +240,11 @@ class StageScreen(Screen):
         pic = self.ids.get("profile_pic")
         if pic:
             pic.source = pic_url
+
+    def _set_player_description(self, description: str | None):
+        clean = (description or "").strip() if isinstance(description, str) else ""
+        fallback = "Describe yourself"
+        self.player_description = clean or fallback
 
     def select_stage(self, amount: int, label: str):
         app = App.get_running_app()
