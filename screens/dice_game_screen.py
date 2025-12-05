@@ -1512,7 +1512,14 @@ class DiceGameScreen(Screen):
         layout = BoxLayout(orientation="vertical", spacing=10, padding=12)
         layout.add_widget(Image(source=image_source, size_hint=(1, 0.65)))
         layout.add_widget(Label(text=name, halign="center", size_hint=(1, 0.175)))
-        layout.add_widget(Label(text=f"Wallet: ₹{balance}", halign="center", size_hint=(1, 0.175)))
+        if storage:
+            wallet_text = storage.wallet_label_text(balance)
+        else:
+            try:
+                wallet_text = f"Wallet: ₹{int(round(float(balance)))}"
+            except (TypeError, ValueError):
+                wallet_text = "Wallet: ₹0"
+        layout.add_widget(Label(text=wallet_text, halign="center", size_hint=(1, 0.175)))
         Popup(title="Player Info", content=layout, size_hint=(None, None), size=(300, 400)).open()
 
     # ---------- deprecated animator ----------

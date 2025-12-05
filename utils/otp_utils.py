@@ -209,3 +209,58 @@ def roll_dice(token: str, match_id: int) -> Dict[str, Any]:
     """Roll a dice for this match (server ensures fairness & sync)."""
     body = {"match_id": int(match_id)}
     return _request("POST", "/matches/roll", json=body, token=token)
+
+
+# ---------------------------------------------------
+# Login OTP helpers (email/username + password)
+# ---------------------------------------------------
+def _login_identifier_payload(identifier: str) -> Dict[str, str]:
+    ident = (identifier or "").strip()
+    payload: Dict[str, str] = {"identifier": ident}
+    if not ident:
+        return payload
+    if "@" in ident:
+        payload["email"] = ident
+    elif ident.isdigit():
+        payload["phone"] = ident
+    else:
+        payload["username"] = ident
+    return payload
+
+
+def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
+    """
+    Trigger an OTP for login after validating identifier + password.
+    Falls back to legacy phone-only OTP if the backend does not expose
+    the new email/password-based endpoint.
+    """
+
+    payload = _login_identifier_payload(identifier)
+    payload["password"] = password
+
+    try:
+        return _request("POST", "/auth/login/request-otp", json=payload)
+    except Exception as primary_err:
+        phone = payload.get("phone")
+        if phone:
+            return send_otp(phone)
+        raise primary_err
+
+
+def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str, Any]:
+    """
+    Verify OTP-based login with identifier + password.
+    Falls back to legacy phone OTP verification for backward compatibility.
+    """
+
+    payload = _login_identifier_payload(identifier)
+    payload["password"] = password
+    payload["otp"] = str(otp).strip()
+
+    try:
+        return _request("POST", "/auth/login/verify-otp", json=payload)
+    except Exception as primary_err:
+        phone = payload.get("phone")
+        if phone:
+            return verify_otp(phone, otp)
+        raise primary_err

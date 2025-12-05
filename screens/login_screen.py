@@ -9,7 +9,11 @@ from kivy.uix.boxlayout import BoxLayout
 
 # frontend helpers
 from utils import storage
-from utils.otp_utils import send_otp, verify_otp, get_profile
+from utils.otp_utils import (
+    request_login_otp,
+    verify_login_with_otp,
+    get_profile,
+)
 
 
 def _safe_text(screen: Screen, wid: str, default: str = "") -> str:
@@ -59,17 +63,40 @@ class LoginScreen(Screen):
         self.manager.current = "forgot_password"
 
     # ---------- UI actions (bound in KV) ----------
+    def _read_identifier(self) -> str:
+        return _safe_text(self, "phone_input")  # legacy id reused for email/username
+
+    def _read_password(self) -> str:
+        return _safe_text(self, "password_input")
+
+    def _validate_identifier(self, identifier: str) -> bool:
+        if not identifier:
+            return False
+        identifier = identifier.strip()
+        if "@" in identifier and "." in identifier.split("@")[-1]:
+            return True
+        if identifier.isdigit() and 6 <= len(identifier) <= 15:
+            return True
+        return len(identifier) >= 3
+
     def send_otp_to_user(self) -> None:
-        phone = _safe_text(self, "phone_input")
-        if not (phone.isdigit() and len(phone) == 10):
-            _popup("Error", "Enter a valid 10-digit phone number.")
+        identifier = self._read_identifier()
+        password = self._read_password()
+
+        if not self._validate_identifier(identifier):
+            _popup("Error", "Enter a valid registered email or username.")
+            return
+        if len(password) < 4:
+            _popup("Error", "Enter your account password.")
             return
 
         def work():
             try:
-                data: Dict[str, Any] = send_otp(phone)
-                ok = bool(data.get("ok", True))  # some backends only return message
-                msg = data.get("message") or ("OTP sent successfully." if ok else "Failed to send OTP.")
+                data: Dict[str, Any] = request_login_otp(identifier, password)
+                ok = bool(data.get("ok", True))
+                msg = data.get("message") or (
+                    "OTP sent successfully." if ok else "Failed to send OTP."
+                )
                 _popup("Success" if ok else "Error", msg)
             except Exception as e:
                 _popup("Error", f"Send OTP error:\n{e}")
@@ -77,10 +104,14 @@ class LoginScreen(Screen):
         Thread(target=work, daemon=True).start()
 
     def verify_and_login(self) -> None:
-        phone = _safe_text(self, "phone_input")
+        identifier = self._read_identifier()
+        password = self._read_password()
         otp = _safe_text(self, "otp_input")
-        if not (phone.isdigit() and len(phone) == 10):
-            _popup("Error", "Enter a valid 10-digit phone number.")
+        if not self._validate_identifier(identifier):
+            _popup("Error", "Enter a valid registered email or username.")
+            return
+        if len(password) < 4:
+            _popup("Error", "Enter your account password.")
             return
         if not otp:
             _popup("Error", "Enter the OTP from your email.")
@@ -88,7 +119,7 @@ class LoginScreen(Screen):
 
         def work():
             try:
-                data: Dict[str, Any] = verify_otp(phone, otp)
+                data: Dict[str, Any] = verify_login_with_otp(identifier, password, otp)
                 token: Optional[str] = data.get("access_token") or data.get("token")
                 user: Optional[Dict[str, Any]] = data.get("user")
 

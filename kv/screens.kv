@@ -16,10 +16,11 @@
 
         BoxLayout:
             orientation: 'vertical'
-            size_hint: 0.85, None
-            height: self.minimum_height
-            spacing: dp(20)
-            padding: dp(30)
+            size_hint: None, None
+            width: min(root.width * 0.9, dp(620))
+            height: min(self.minimum_height, root.height * 0.85)
+            spacing: dp(14) if root.width < dp(420) else dp(20)
+            padding: dp(18) if root.width < dp(420) else dp(30)
             pos_hint: {'center_x': 0.5, 'center_y': 0.5}
             canvas.before:
                 Color:
@@ -92,74 +93,107 @@
                 size: self.size
                 source: "assets/login.png"
 
-        BoxLayout:
-            orientation: "vertical"
-            size_hint: 0.85, 0.6
+        ScrollView:
+            size_hint: 0.94, 0.78
             pos_hint: {"center_x": 0.5, "center_y": 0.55}
-            spacing: dp(15)
-            padding: dp(20)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.4
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [20]
+            do_scroll_y: True
+            do_scroll_x: False
+            bar_width: dp(4)
 
-            Label:
-                text: "Login (OTP to Email)"
-                font_size: sp(24)
-                color: 1, 1, 1, 1
-                halign: "center"
-                valign: "middle"
-                text_size: self.width, None
+            BoxLayout:
+                orientation: "vertical"
                 size_hint_y: None
-                height: self.texture_size[1] + dp(20)
+                size_hint_x: None
+                height: self.minimum_height
+                width: min(root.width * 0.9, dp(520))
+                pos_hint: {"center_x": 0.5}
+                spacing: dp(12) if root.width < dp(420) else dp(16)
+                padding: dp(16) if root.width < dp(420) else dp(22)
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.45
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [20]
 
-            TextInput:
-                id: phone_input
-                hint_text: "Enter 10-digit Phone"
-                input_filter: "int"
-                max_text_length: 10
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.8)
-                foreground_color: (0, 0, 0, 1)
+                Label:
+                    text: "Secure Login"
+                    font_size: sp(24)
+                    color: 1, 1, 1, 1
+                    halign: "center"
+                    valign: "middle"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(20)
 
-            TextInput:
-                id: otp_input
-                hint_text: "Enter OTP (from your email)"
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.8)
-                foreground_color: (0, 0, 0, 1)
+                TextInput:
+                    id: phone_input
+                    hint_text: "Email / Username (registered)"
+                    multiline: False
+                    font_size: sp(18)
+                    size_hint_y: None
+                    height: dp(48)
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
 
-            Button:
-                text: "Send OTP"
-                size_hint_y: None
-                height: dp(45)
-                font_size: sp(18)
-                on_release: root.send_otp_to_user()
+                BoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(8)
+                    TextInput:
+                        id: password_input
+                        hint_text: "Account password"
+                        password: login_password_toggle.state != "down"
+                        multiline: False
+                        font_size: sp(18)
+                        size_hint_y: None
+                        height: dp(48)
+                        background_color: (1, 1, 1, 0.85)
+                        foreground_color: (0, 0, 0, 1)
+                    ToggleButton:
+                        id: login_password_toggle
+                        size_hint_x: None
+                        width: dp(48)
+                        text: "🙈" if self.state == "down" else "👁"
+                        background_normal: ""
+                        background_color: (1, 1, 1, 0.3)
+                        color: (0, 0, 0, 1)
+                        on_state: password_input.cursor = password_input.cursor  # force refresh
 
-            Button:
-                text: "Verify & Login"
-                size_hint_y: None
-                height: dp(45)
-                font_size: sp(18)
-                on_release: root.verify_and_login()
+                TextInput:
+                    id: otp_input
+                    hint_text: "Enter OTP (sent to email)"
+                    multiline: False
+                    font_size: sp(18)
+                    size_hint_y: None
+                    height: dp(48)
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
 
-            Button:
-                text: "Forgot Password?"
-                size_hint_y: None
-                height: dp(38)
-                font_size: sp(16)
-                background_color: (0, 0, 0, 0)
-                color: (1, 1, 1, 0.9)
-                on_release: root.open_forgot_password()
+                Button:
+                    text: "Request OTP"
+                    size_hint_y: None
+                    height: dp(48)
+                    font_size: sp(18)
+                    on_release: root.send_otp_to_user()
+
+                Button:
+                    text: "Verify & Login"
+                    size_hint_y: None
+                    height: dp(48)
+                    font_size: sp(18)
+                    on_release: root.verify_and_login()
+
+                Button:
+                    text: "Forgot Password?"
+                    size_hint_y: None
+                    height: dp(42)
+                    font_size: sp(16)
+                    background_color: (0, 0, 0, 0)
+                    color: (1, 1, 1, 0.9)
+                    on_release: root.open_forgot_password()
 
         Button:
             text: "Back"
@@ -181,69 +215,78 @@
                 size: self.size
                 source: "assets/login.png"
 
-        BoxLayout:
-            orientation: "vertical"
-            size_hint: 0.85, 0.6
+        ScrollView:
+            size_hint: 0.94, 0.78
             pos_hint: {"center_x": 0.5, "center_y": 0.55}
-            spacing: dp(15)
-            padding: dp(20)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.4
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [20]
+            do_scroll_y: True
+            do_scroll_x: False
 
-            Label:
-                text: "Forgot Password"
-                font_size: sp(24)
-                color: 1, 1, 1, 1
-                halign: "center"
-                valign: "middle"
-                text_size: self.width, None
+            BoxLayout:
+                orientation: "vertical"
                 size_hint_y: None
-                height: self.texture_size[1] + dp(20)
+                size_hint_x: None
+                height: self.minimum_height
+                width: min(root.width * 0.9, dp(520))
+                pos_hint: {"center_x": 0.5}
+                spacing: dp(12) if root.width < dp(420) else dp(16)
+                padding: dp(16) if root.width < dp(420) else dp(22)
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.45
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [20]
 
-            TextInput:
-                id: phone_input
-                hint_text: "Enter registered phone"
-                input_filter: "int"
-                max_text_length: 10
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
+                Label:
+                    text: "Forgot Password"
+                    font_size: sp(24)
+                    color: 1, 1, 1, 1
+                    halign: "center"
+                    valign: "middle"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(20)
 
-            Button:
-                text: "Send OTP"
-                size_hint_y: None
-                height: dp(45)
-                font_size: sp(18)
-                disabled: root.is_processing
-                on_release: root.send_reset_otp()
+                TextInput:
+                    id: phone_input
+                    hint_text: "Enter registered phone"
+                    input_filter: "int"
+                    max_text_length: 10
+                    multiline: False
+                    font_size: sp(18)
+                    size_hint_y: None
+                    height: dp(48)
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
 
-            TextInput:
-                id: otp_input
-                hint_text: "Enter OTP"
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
-                disabled: not root.otp_stage_ready
+                Button:
+                    text: "Send OTP"
+                    size_hint_y: None
+                    height: dp(48)
+                    font_size: sp(18)
+                    disabled: root.is_processing
+                    on_release: root.send_reset_otp()
 
-            Button:
-                id: verify_btn
-                text: "Verify OTP"
-                size_hint_y: None
-                height: dp(45)
-                font_size: sp(18)
-                disabled: (not root.otp_stage_ready) or root.is_processing
-                on_release: root.verify_otp_and_continue()
+                TextInput:
+                    id: otp_input
+                    hint_text: "Enter OTP"
+                    multiline: False
+                    font_size: sp(18)
+                    size_hint_y: None
+                    height: dp(48)
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
+                    disabled: not root.otp_stage_ready
+
+                Button:
+                    id: verify_btn
+                    text: "Verify OTP"
+                    size_hint_y: None
+                    height: dp(48)
+                    font_size: sp(18)
+                    disabled: (not root.otp_stage_ready) or root.is_processing
+                    on_release: root.verify_otp_and_continue()
 
         Button:
             text: "Back"
@@ -265,66 +308,103 @@
                 size: self.size
                 source: "assets/login.png"
 
-        BoxLayout:
-            orientation: "vertical"
-            size_hint: 0.85, 0.5
-            pos_hint: {"center_x": 0.5, "center_y": 0.55}
-            spacing: dp(15)
-            padding: dp(20)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.4
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [20]
+        ScrollView:
+            size_hint: 0.94, 0.72
+            pos_hint: {"center_x": 0.5, "center_y": 0.57}
+            do_scroll_y: True
+            do_scroll_x: False
 
-            Label:
-                text: "Set a new password"
-                font_size: sp(24)
-                color: 1, 1, 1, 1
-                halign: "center"
-                valign: "middle"
-                text_size: self.width, None
+            BoxLayout:
+                orientation: "vertical"
                 size_hint_y: None
-                height: self.texture_size[1] + dp(15)
+                size_hint_x: None
+                height: self.minimum_height
+                width: min(root.width * 0.9, dp(520))
+                pos_hint: {"center_x": 0.5}
+                spacing: dp(12) if root.width < dp(420) else dp(16)
+                padding: dp(16) if root.width < dp(420) else dp(22)
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.45
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [20]
 
-            Label:
-                text: "Phone: " + (root.current_phone or "--")
-                font_size: sp(16)
-                color: 1, 1, 1, 0.9
-                size_hint_y: None
-                height: dp(30)
+                Label:
+                    text: "Set a new password"
+                    font_size: sp(24)
+                    color: 1, 1, 1, 1
+                    halign: "center"
+                    valign: "middle"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(15)
 
-            TextInput:
-                id: password_input
-                hint_text: "New password"
-                password: True
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
+                Label:
+                    text: "Phone: " + (root.current_phone or "--")
+                    font_size: sp(16)
+                    color: 1, 1, 1, 0.9
+                    size_hint_y: None
+                    height: dp(30)
 
-            TextInput:
-                id: confirm_password_input
-                hint_text: "Confirm password"
-                password: True
-                multiline: False
-                font_size: sp(18)
-                size_hint_y: None
-                height: dp(45)
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
+                BoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(8)
+                    TextInput:
+                        id: password_input
+                        hint_text: "New password"
+                        password: reset_password_toggle.state != "down"
+                        multiline: False
+                        font_size: sp(18)
+                        size_hint_y: None
+                        height: dp(48)
+                        background_color: (1, 1, 1, 0.85)
+                        foreground_color: (0, 0, 0, 1)
+                    ToggleButton:
+                        id: reset_password_toggle
+                        size_hint_x: None
+                        width: dp(48)
+                        text: "🙈" if self.state == "down" else "👁"
+                        background_normal: ""
+                        background_color: (1, 1, 1, 0.3)
+                        color: (0, 0, 0, 1)
+                        on_state: password_input.cursor = password_input.cursor
 
-            Button:
-                text: "Save Password"
-                size_hint_y: None
-                height: dp(45)
-                font_size: sp(18)
-                disabled: root.is_processing
-                on_release: root.save_new_password()
+                BoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(8)
+                    TextInput:
+                        id: confirm_password_input
+                        hint_text: "Confirm password"
+                        password: reset_confirm_toggle.state != "down"
+                        multiline: False
+                        font_size: sp(18)
+                        size_hint_y: None
+                        height: dp(48)
+                        background_color: (1, 1, 1, 0.85)
+                        foreground_color: (0, 0, 0, 1)
+                    ToggleButton:
+                        id: reset_confirm_toggle
+                        size_hint_x: None
+                        width: dp(48)
+                        text: "🙈" if self.state == "down" else "👁"
+                        background_normal: ""
+                        background_color: (1, 1, 1, 0.3)
+                        color: (0, 0, 0, 1)
+                        on_state: confirm_password_input.cursor = confirm_password_input.cursor
+
+                Button:
+                    text: "Save Password"
+                    size_hint_y: None
+                    height: dp(48)
+                    font_size: sp(18)
+                    disabled: root.is_processing
+                    on_release: root.save_new_password()
 
         BoxLayout:
             size_hint: 1, None
@@ -350,88 +430,110 @@
                 size: self.size
                 source: "assets/login.png"
 
-        BoxLayout:
-            orientation: "vertical"
-            size_hint: 0.85, None
-            height: self.minimum_height
+        ScrollView:
+            size_hint: 0.94, 0.9
             pos_hint: {"center_x": 0.5, "center_y": 0.5}
-            spacing: dp(12)
-            padding: dp(18)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.45
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [20]
-
-            Label:
-                text: "Create your account"
-                font_size: "26sp"
-                color: 1, 1, 1, 1
-                halign: "center"
-                valign: "middle"
-                text_size: self.width, None
-                size_hint_y: None
-                height: self.texture_size[1] + dp(12)
-
-            TextInput:
-                id: name_input
-                hint_text: "Full Name"
-                size_hint_y: None
-                height: dp(48)
-                font_size: "18sp"
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
-
-            TextInput:
-                id: phone_input
-                hint_text: "Phone (10 digits)"
-                input_filter: "int"
-                max_text_length: 10
-                size_hint_y: None
-                height: dp(48)
-                font_size: "18sp"
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
-
-            TextInput:
-                id: email_input
-                hint_text: "Email"
-                size_hint_y: None
-                height: dp(48)
-                font_size: "18sp"
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
-
-            TextInput:
-                id: password_input
-                hint_text: "Password"
-                password: True
-                size_hint_y: None
-                height: dp(48)
-                font_size: "18sp"
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
-
-            TextInput:
-                id: upi_input
-                hint_text: "UPI ID (optional)"
-                size_hint_y: None
-                height: dp(48)
-                font_size: "18sp"
-                background_color: (1, 1, 1, 0.85)
-                foreground_color: (0, 0, 0, 1)
+            do_scroll_y: True
+            do_scroll_x: False
 
             BoxLayout:
+                orientation: "vertical"
                 size_hint_y: None
-                height: dp(48)
-                spacing: dp(10)
-                Button:
-                    text: "Register"
+                size_hint_x: None
+                height: self.minimum_height
+                width: min(root.width * 0.92, dp(620))
+                pos_hint: {"center_x": 0.5}
+                spacing: dp(12) if root.width < dp(480) else dp(16)
+                padding: dp(16) if root.width < dp(480) else dp(26)
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.45
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [20]
+
+                Label:
+                    text: "Create your account"
+                    font_size: "26sp"
+                    color: 1, 1, 1, 1
+                    halign: "center"
+                    valign: "middle"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(12)
+
+                TextInput:
+                    id: name_input
+                    hint_text: "Full Name"
+                    size_hint_y: None
+                    height: dp(50)
                     font_size: "18sp"
-                    background_color: (0.3, 0.7, 0.3, 1)
-                    on_release: root.save_profile()
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
+
+                TextInput:
+                    id: phone_input
+                    hint_text: "Phone (10 digits)"
+                    input_filter: "int"
+                    max_text_length: 10
+                    size_hint_y: None
+                    height: dp(50)
+                    font_size: "18sp"
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
+
+                TextInput:
+                    id: email_input
+                    hint_text: "Email"
+                    size_hint_y: None
+                    height: dp(50)
+                    font_size: "18sp"
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
+
+                BoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(50)
+                    spacing: dp(8)
+                    TextInput:
+                        id: password_input
+                        hint_text: "Password"
+                        password: register_password_toggle.state != "down"
+                        size_hint_y: None
+                        height: dp(50)
+                        font_size: "18sp"
+                        background_color: (1, 1, 1, 0.85)
+                        foreground_color: (0, 0, 0, 1)
+                    ToggleButton:
+                        id: register_password_toggle
+                        size_hint_x: None
+                        width: dp(48)
+                        text: "🙈" if self.state == "down" else "👁"
+                        background_normal: ""
+                        background_color: (1, 1, 1, 0.3)
+                        color: (0, 0, 0, 1)
+                        on_state: password_input.cursor = password_input.cursor
+
+                TextInput:
+                    id: upi_input
+                    hint_text: "UPI ID (optional)"
+                    size_hint_y: None
+                    height: dp(50)
+                    font_size: "18sp"
+                    background_color: (1, 1, 1, 0.85)
+                    foreground_color: (0, 0, 0, 1)
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(50)
+                    spacing: dp(10)
+                    Button:
+                        text: "Register"
+                        font_size: "18sp"
+                        background_color: (0.3, 0.7, 0.3, 1)
+                        on_release: root.save_profile()
 
         Button:
             text: "Back"
@@ -466,7 +568,7 @@
                 size_hint_y: None
                 height: self.minimum_height
                 spacing: dp(10)
-                padding: dp(15)
+                padding: dp(12) if root.width < dp(500) else dp(20)
 
                 Button:
                     size_hint: None, None
@@ -479,9 +581,10 @@
 
                 Label:
                     id: wallet_label
-                    text: "Wallet: 0 coins"
-                    font_size: "17sp"
-                    color: 0, 0.6, 0, 1
+                    text: "[b]Wallet: ₹0[/b]"
+                    markup: True
+                    font_size: "19sp"
+                    color: 1, 0.55, 0, 1
                     size_hint_y: None
                     height: dp(28)
                     halign: "center"
@@ -595,8 +698,8 @@
         BoxLayout:
             orientation: "vertical"
             size_hint: 1, 1
-            padding: dp(14)
-            spacing: dp(14)
+            padding: dp(10) if root.width < dp(600) else dp(14)
+            spacing: dp(10) if root.width < dp(600) else dp(14)
 
             BoxLayout:
                 orientation: "horizontal"
@@ -638,7 +741,8 @@
                             text_size: self.size
 
                         Label:
-                            text: "Ready to play"
+                            id: description_label
+                            text: root.player_description or "Describe yourself"
                             font_size: sp(14)
                             color: 1, 1, 1, 0.85
                             halign: "left"
@@ -723,16 +827,13 @@
                             font_size: sp(15)
                             on_release: app.selected_mode = 3
 
-            AnchorLayout:
+            BoxLayout:
                 size_hint_y: None
-                height: dp(60)
-                anchor_x: "left"
-                anchor_y: "bottom"
-
+                height: dp(64)
+                padding: dp(10) if root.width < dp(520) else dp(14)
                 Button:
                     text: "Logout"
-                    size_hint: None, None
-                    width: dp(140)
+                    size_hint: 1, None
                     height: dp(46)
                     font_size: sp(16)
                     background_color: 0.8, 0.1, 0.1, 0.9
