@@ -6,7 +6,7 @@ from kivy.uix.label import Label
 from kivy.uix.screenmanager import Screen
 from kivy.clock import Clock
 from kivy.graphics import RoundedRectangle, Color
-from kivy.properties import StringProperty
+from kivy.properties import StringProperty, BooleanProperty
 from kivy.core.window import Window
 import threading, requests
 
@@ -19,6 +19,7 @@ except Exception:
 class StageScreen(Screen):
     profile_image = StringProperty("assets/default.png")
     player_description = StringProperty("Describe yourself")
+    is_logging_out = BooleanProperty(False)
 
     def _scale(self, base: float) -> float:
         w, h = Window.size
@@ -50,7 +51,7 @@ class StageScreen(Screen):
 
         cached_user = storage.get_user() if storage else None
         if cached_user:
-            self._set_player_description(cached_user.get("description"))
+            self._apply_description_payload(cached_user)
 
         pic = self.ids.get("profile_pic")
         if pic:
@@ -194,6 +195,9 @@ class StageScreen(Screen):
                 )
                 if resp.status_code == 200:
                     data = resp.json()
+                    desc = self._extract_description(data)
+                    if desc and not data.get("description"):
+                        data["description"] = desc
                     storage.set_user(data)
                     balance = data.get("wallet_balance", 0)
 
@@ -202,7 +206,6 @@ class StageScreen(Screen):
                         name = data.get("phone") or "Player"
 
                     pic_url = data.get("profile_image") or "assets/default.png"
-                    description = data.get("description")
                     self.profile_image = pic_url
                     Clock.schedule_once(
                         lambda dt: self._update_wallet_label(balance), 0
@@ -212,9 +215,11 @@ class StageScreen(Screen):
                         lambda dt: self._update_profile_pic(pic_url), 0
                     )
                     Clock.schedule_once(
-                        lambda dt, desc=description: self._set_player_description(desc),
+                        lambda dt, payload=data: self._apply_description_payload(payload),
                         0,
                     )
+                    if not desc:
+                        self._fetch_description_from_backend()
             except Exception as e:
                 print(f"[ERR] Wallet fetch failed: {e}")
 
@@ -241,10 +246,63 @@ class StageScreen(Screen):
         if pic:
             pic.source = pic_url
 
+    def _apply_description_payload(self, payload) -> bool:
+        desc = self._extract_description(payload)
+        if desc:
+            self._set_player_description(desc)
+            return True
+        return False
+
+    @staticmethod
+    def _extract_description(payload) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("description", "player_description", "profile_description", "bio", "about"):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return ""
+
     def _set_player_description(self, description: str | None):
         clean = (description or "").strip() if isinstance(description, str) else ""
         fallback = "Describe yourself"
         self.player_description = clean or fallback
+
+    def _fetch_description_from_backend(self):
+        token = storage.get_token() if storage else None
+        backend = storage.get_backend_url() if storage else None
+        if not (backend and token):
+            return
+
+        def worker():
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            desc_text = ""
+            for path in ("/users/me/profile", "/users/me"):
+                try:
+                    resp = requests.get(
+                        f"{backend}{path}",
+                        headers=headers,
+                        timeout=10,
+                        verify=False,
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    payload = resp.json()
+                    desc_text = self._extract_description(payload)
+                    if desc_text:
+                        if storage:
+                            cached = storage.get_user() or {}
+                            cached["description"] = desc_text
+                            storage.set_user(cached)
+                        Clock.schedule_once(
+                            lambda dt, txt=desc_text: self._set_player_description(txt),
+                            0,
+                        )
+                        return
+                except Exception as err:
+                    print(f"[WARN] Description fetch failed ({path}): {err}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def select_stage(self, amount: int, label: str):
         app = App.get_running_app()
@@ -300,13 +358,25 @@ class StageScreen(Screen):
 
     def logout_to_login(self):
         """Clear local session data and send the user back to login."""
-        if storage:
-            storage.clear_all()
+        if self.is_logging_out:
+            return
+        self.is_logging_out = True
 
-        app = App.get_running_app()
-        for attr in ("user_token", "user_id", "selected_stake"):
-            if hasattr(app, attr):
-                setattr(app, attr, None)
+        def perform_logout(_dt):
+            if storage:
+                storage.clear_all()
 
-        if self.manager:
-            self.manager.current = "login"
+            app = App.get_running_app()
+            for attr in ("user_token", "user_id", "selected_stake"):
+                if hasattr(app, attr):
+                    setattr(app, attr, None)
+
+            if self.manager:
+                self.manager.current = "login"
+
+            Clock.schedule_once(self._reset_logout_state, 0.5)
+
+        Clock.schedule_once(perform_logout, 0)
+
+    def _reset_logout_state(self, *_):
+        self.is_logging_out = False

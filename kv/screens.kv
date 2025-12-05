@@ -119,81 +119,132 @@
 
                 Label:
                     text: "Secure Login"
-                    font_size: sp(24)
+                    font_size: sp(26)
                     color: 1, 1, 1, 1
                     halign: "center"
                     valign: "middle"
                     text_size: self.width, None
                     size_hint_y: None
-                    height: self.texture_size[1] + dp(20)
-
-                TextInput:
-                    id: phone_input
-                    hint_text: "Email / Username (registered)"
-                    multiline: False
-                    font_size: sp(18)
-                    size_hint_y: None
-                    height: dp(48)
-                    background_color: (1, 1, 1, 0.85)
-                    foreground_color: (0, 0, 0, 1)
+                    height: self.texture_size[1] + dp(10)
 
                 BoxLayout:
-                    orientation: "horizontal"
+                    orientation: "vertical"
                     size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(8)
+                    height: dp(260)
+                    padding: dp(16)
+                    spacing: dp(12)
+                    canvas.before:
+                        Color:
+                            rgba: 0.07, 0.16, 0.32, 0.85
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [18]
+
+                    Label:
+                        text: "Account Details"
+                        font_size: sp(17)
+                        color: 1, 1, 1, 0.9
+                        size_hint_y: None
+                        height: self.texture_size[1] + dp(4)
+
                     TextInput:
-                        id: password_input
-                        hint_text: "Account password"
-                        password: login_password_toggle.state != "down"
+                        id: phone_input
+                        hint_text: "Email / Username (registered)"
                         multiline: False
                         font_size: sp(18)
                         size_hint_y: None
-                        height: dp(48)
-                        background_color: (1, 1, 1, 0.85)
-                        foreground_color: (0, 0, 0, 1)
-                    ToggleButton:
-                        id: login_password_toggle
-                        size_hint_x: None
-                        width: dp(48)
-                        text: "🙈" if self.state == "down" else "👁"
+                        height: dp(56)
+                        background_color: (0.98, 0.95, 0.9, 0.95)
+                        foreground_color: (0.09, 0.1, 0.14, 1)
+                        padding: [dp(14), dp(12), dp(14), dp(12)]
+
+                    RelativeLayout:
+                        size_hint_y: None
+                        height: dp(58)
+                        TextInput:
+                            id: password_input
+                            hint_text: "Account password"
+                            password: login_password_toggle.state != "down"
+                            multiline: False
+                            font_size: sp(18)
+                            size_hint: 1, 1
+                            background_color: (0.92, 0.96, 1, 0.95)
+                            foreground_color: (0.09, 0.1, 0.14, 1)
+                            padding: [dp(14), dp(12), dp(46), dp(12)]
+                        ToggleButton:
+                            id: login_password_toggle
+                            size_hint: None, None
+                            size: dp(42), dp(42)
+                            pos_hint: {"right": 1, "center_y": 0.5}
+                            text: "🙈" if self.state == "down" else "👁"
+                            background_normal: ""
+                            background_down: ""
+                            border: (0, 0, 0, 0)
+                            background_color: (0, 0, 0, 0)
+                            color: (0.1, 0.2, 0.35, 1)
+                            on_state: password_input.cursor = password_input.cursor  # force refresh
+
+                    Button:
+                        text: "Request OTP"
+                        size_hint_y: None
+                        height: dp(46)
+                        font_size: sp(17)
                         background_normal: ""
-                        background_color: (1, 1, 1, 0.3)
-                        color: (0, 0, 0, 1)
-                        on_state: password_input.cursor = password_input.cursor  # force refresh
+                        background_color: (0.96, 0.58, 0.17, 1)
+                        color: (0.1, 0.05, 0.02, 1)
+                        on_release: root.send_otp_to_user()
 
-                TextInput:
-                    id: otp_input
-                    hint_text: "Enter OTP (sent to email)"
-                    multiline: False
-                    font_size: sp(18)
-                    size_hint_y: None
-                    height: dp(48)
-                    background_color: (1, 1, 1, 0.85)
-                    foreground_color: (0, 0, 0, 1)
+                    TextInput:
+                        id: otp_input
+                        hint_text: "Enter OTP (sent to email)"
+                        multiline: False
+                        font_size: sp(18)
+                        size_hint_y: None
+                        height: dp(54)
+                        background_color: (0.92, 0.98, 0.95, 0.95)
+                        foreground_color: (0.09, 0.1, 0.14, 1)
+                        padding: [dp(14), dp(12), dp(14), dp(12)]
 
-                Button:
-                    text: "Request OTP"
+                BoxLayout:
+                    orientation: "vertical"
                     size_hint_y: None
-                    height: dp(48)
-                    font_size: sp(18)
-                    on_release: root.send_otp_to_user()
+                    height: dp(170)
+                    padding: dp(16)
+                    spacing: dp(12)
+                    canvas.before:
+                        Color:
+                            rgba: 0.22, 0.09, 0.24, 0.8
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [18]
 
-                Button:
-                    text: "Verify & Login"
-                    size_hint_y: None
-                    height: dp(48)
-                    font_size: sp(18)
-                    on_release: root.verify_and_login()
+                    Label:
+                        text: "Ready to continue?"
+                        font_size: sp(17)
+                        color: 1, 1, 1, 0.9
+                        size_hint_y: None
+                        height: self.texture_size[1] + dp(4)
 
-                Button:
-                    text: "Forgot Password?"
-                    size_hint_y: None
-                    height: dp(42)
-                    font_size: sp(16)
-                    background_color: (0, 0, 0, 0)
-                    color: (1, 1, 1, 0.9)
-                    on_release: root.open_forgot_password()
+                    Button:
+                        text: "Verify & Login"
+                        size_hint_y: None
+                        height: dp(54)
+                        font_size: sp(18)
+                        background_normal: ""
+                        background_color: (0.37, 0.83, 0.55, 1)
+                        color: (0.05, 0.08, 0.08, 1)
+                        on_release: root.verify_and_login()
+
+                    Button:
+                        text: "Forgot Password?"
+                        size_hint_y: None
+                        height: dp(40)
+                        font_size: sp(16)
+                        background_color: (0, 0, 0, 0)
+                        color: (1, 1, 1, 0.9)
+                        on_release: root.open_forgot_password()
 
         Button:
             text: "Back"
@@ -348,53 +399,55 @@
                     size_hint_y: None
                     height: dp(30)
 
-                BoxLayout:
-                    orientation: "horizontal"
+                RelativeLayout:
                     size_hint_y: None
                     height: dp(48)
-                    spacing: dp(8)
                     TextInput:
                         id: password_input
                         hint_text: "New password"
                         password: reset_password_toggle.state != "down"
                         multiline: False
                         font_size: sp(18)
-                        size_hint_y: None
-                        height: dp(48)
+                        size_hint: 1, 1
                         background_color: (1, 1, 1, 0.85)
                         foreground_color: (0, 0, 0, 1)
+                        padding: [dp(12), dp(10), dp(46), dp(10)]
                     ToggleButton:
                         id: reset_password_toggle
-                        size_hint_x: None
-                        width: dp(48)
+                        size_hint: None, None
+                        size: dp(40), dp(40)
+                        pos_hint: {"right": 1, "center_y": 0.5}
                         text: "🙈" if self.state == "down" else "👁"
                         background_normal: ""
-                        background_color: (1, 1, 1, 0.3)
+                        background_down: ""
+                        border: (0, 0, 0, 0)
+                        background_color: (0, 0, 0, 0)
                         color: (0, 0, 0, 1)
                         on_state: password_input.cursor = password_input.cursor
 
-                BoxLayout:
-                    orientation: "horizontal"
+                RelativeLayout:
                     size_hint_y: None
                     height: dp(48)
-                    spacing: dp(8)
                     TextInput:
                         id: confirm_password_input
                         hint_text: "Confirm password"
                         password: reset_confirm_toggle.state != "down"
                         multiline: False
                         font_size: sp(18)
-                        size_hint_y: None
-                        height: dp(48)
+                        size_hint: 1, 1
                         background_color: (1, 1, 1, 0.85)
                         foreground_color: (0, 0, 0, 1)
+                        padding: [dp(12), dp(10), dp(46), dp(10)]
                     ToggleButton:
                         id: reset_confirm_toggle
-                        size_hint_x: None
-                        width: dp(48)
+                        size_hint: None, None
+                        size: dp(40), dp(40)
+                        pos_hint: {"right": 1, "center_y": 0.5}
                         text: "🙈" if self.state == "down" else "👁"
                         background_normal: ""
-                        background_color: (1, 1, 1, 0.3)
+                        background_down: ""
+                        border: (0, 0, 0, 0)
+                        background_color: (0, 0, 0, 0)
                         color: (0, 0, 0, 1)
                         on_state: confirm_password_input.cursor = confirm_password_input.cursor
 
@@ -492,27 +545,28 @@
                     background_color: (1, 1, 1, 0.85)
                     foreground_color: (0, 0, 0, 1)
 
-                BoxLayout:
-                    orientation: "horizontal"
+                RelativeLayout:
                     size_hint_y: None
                     height: dp(50)
-                    spacing: dp(8)
                     TextInput:
                         id: password_input
                         hint_text: "Password"
                         password: register_password_toggle.state != "down"
-                        size_hint_y: None
-                        height: dp(50)
+                        size_hint: 1, 1
                         font_size: "18sp"
                         background_color: (1, 1, 1, 0.85)
                         foreground_color: (0, 0, 0, 1)
+                        padding: [dp(12), dp(12), dp(46), dp(12)]
                     ToggleButton:
                         id: register_password_toggle
-                        size_hint_x: None
-                        width: dp(48)
+                        size_hint: None, None
+                        size: dp(40), dp(40)
+                        pos_hint: {"right": 1, "center_y": 0.5}
                         text: "🙈" if self.state == "down" else "👁"
                         background_normal: ""
-                        background_color: (1, 1, 1, 0.3)
+                        background_down: ""
+                        border: (0, 0, 0, 0)
+                        background_color: (0, 0, 0, 0)
                         color: (0, 0, 0, 1)
                         on_state: password_input.cursor = password_input.cursor
 
@@ -734,20 +788,26 @@
                         Label:
                             id: welcome_label
                             text: ""
-                            font_size: sp(18)
+                            font_size: sp(16)
                             color: 1, 1, 1, 1
                             halign: "left"
                             valign: "middle"
-                            text_size: self.size
+                            text_size: self.width, None
+                            shorten: True
+                            shorten_from: "right"
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(4)
 
                         Label:
                             id: description_label
                             text: root.player_description or "Describe yourself"
-                            font_size: sp(14)
+                            font_size: sp(12)
                             color: 1, 1, 1, 0.85
                             halign: "left"
                             valign: "middle"
-                            text_size: self.size
+                            text_size: self.width, None
+                            size_hint_y: None
+                            height: min(self.texture_size[1] + dp(4), dp(48))
 
                 Label:
                     id: wallet_label
@@ -831,12 +891,15 @@
                 size_hint_y: None
                 height: dp(64)
                 padding: dp(10) if root.width < dp(520) else dp(14)
+                spacing: dp(6)
                 Button:
-                    text: "Logout"
+                    id: logout_button
+                    text: "Logging out..." if root.is_logging_out else "Logout"
                     size_hint: 1, None
                     height: dp(46)
                     font_size: sp(16)
-                    background_color: 0.8, 0.1, 0.1, 0.9
+                    background_color: (0.6, 0.6, 0.6, 0.7) if root.is_logging_out else (0.8, 0.1, 0.1, 0.9)
+                    disabled: root.is_logging_out
                     on_release: root.logout_to_login()
 
 #:import dp kivy.metrics.dp
