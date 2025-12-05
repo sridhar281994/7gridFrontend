@@ -218,3 +218,18 @@ def set_stakes_cache(stakes):
 
 def get_stakes_cache():
     return _stakes_cache
+
+
+# ---- wallet formatting helpers ----
+def normalize_wallet_amount(amount: Any) -> int:
+    """Round any numeric wallet amount to the nearest integer."""
+    try:
+        value = float(amount)
+    except (TypeError, ValueError):
+        return 0
+    return int(round(value))
+
+
+def wallet_label_text(amount: Any, prefix: str = "Wallet: ₹") -> str:
+    """Return a consistent label for wallet balances without decimals."""
+    return f"{prefix}{normalize_wallet_amount(amount)}"

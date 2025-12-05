@@ -168,7 +168,15 @@ class WalletActionsMixin:
                 layout.bind(minimum_height=layout.setter("height"))
 
                 for tx in txs:
-                    text = f"[{tx['timestamp'][:16]}] {tx['type']} ₹{tx['amount']} ({tx['status']})"
+                    amount_val = tx.get("amount", 0)
+                    if storage:
+                        amount_val = storage.normalize_wallet_amount(amount_val)
+                    else:
+                        try:
+                            amount_val = int(round(float(amount_val)))
+                        except (TypeError, ValueError):
+                            amount_val = 0
+                    text = f"[{tx['timestamp'][:16]}] {tx['type']} ₹{amount_val} ({tx['status']})"
                     lbl = Label(
                         text=text,
                         halign="left",
@@ -213,14 +221,23 @@ class WalletActionsMixin:
                         if storage:
                             storage.set_user(user)
                         balance = user.get("wallet_balance") or 0
-                        balance_text = f"Wallet: ₹{balance}"
+                        if storage:
+                            balance_text = storage.wallet_label_text(balance)
+                        else:
+                            try:
+                                balance_text = f"Wallet: ₹{int(round(float(balance)))}"
+                            except (TypeError, ValueError):
+                                balance_text = "Wallet: ₹0"
                 except Exception as err:
                     print(f"[WARN] Wallet refresh failed: {err}")
 
             def update_label(_dt):
                 wallet_lbl = self.ids.get("wallet_label")
                 if wallet_lbl:
-                    wallet_lbl.text = balance_text
+                    if getattr(wallet_lbl, "markup", False):
+                        wallet_lbl.text = f"[b]{balance_text}[/b]"
+                    else:
+                        wallet_lbl.text = balance_text
 
             Clock.schedule_once(update_label, 0)
 

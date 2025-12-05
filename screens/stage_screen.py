@@ -213,7 +213,13 @@ class StageScreen(Screen):
     def _update_wallet_label(self, balance: float):
         lbl = self.ids.get("wallet_label")
         if lbl:
-            lbl.text = f"Wallet: ₹{balance}"
+            if storage:
+                lbl.text = storage.wallet_label_text(balance)
+            else:
+                try:
+                    lbl.text = f"Wallet: ₹{int(round(float(balance)))}"
+                except (TypeError, ValueError):
+                    lbl.text = "Wallet: ₹0"
 
     def _update_name_label(self, name: str):
         lbl = self.ids.get("welcome_label")
