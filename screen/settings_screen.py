@@ -40,11 +40,13 @@ class SettingsScreen(Screen):
         # refresh wallet balance
         self.refresh_wallet_balance()
 
-        # preload profile picture
+        # preload profile + cached inputs
         if storage:
             user = storage.get_user() or {}
             if user.get("profile_image"):
                 self.profile_image = user["profile_image"]
+            if user:
+                self._populate_user_inputs(user)
 
         # 🔄 preload name, upi, description, phone from backend
         token = storage.get_token() if storage else None
@@ -65,18 +67,7 @@ class SettingsScreen(Screen):
                     storage.set_user(user)
 
                     def update_inputs(dt):
-                        if self.ids.get("name_input"):
-                            self.ids.name_input.text = user.get("name") or ""
-                        if self.ids.get("upi_input"):
-                            self.ids.upi_input.text = user.get("upi_id") or ""
-                        if self.ids.get("desc_input"):
-                            self.ids.desc_input.text = user.get("description") or ""
-                        if self.ids.get("phone_input"):
-                            self.ids.phone_input.text = user.get("phone") or ""
-
-                        # keep original values sync'd for OTP validation
-                        self._original_upi = user.get("upi_id") or ""
-                        self._original_paypal = user.get("paypal_id") or ""
+                        self._populate_user_inputs(user)
 
                     Clock.schedule_once(update_inputs, 0)
             except Exception as e:
@@ -210,12 +201,7 @@ class SettingsScreen(Screen):
 
             phone_input = self.ids.get("phone_input")
             if phone_input is not None:
-                phone_value = (
-                    user.get("phone")
-                    or user.get("phone_number")
-                    or user.get("mobile")
-                )
-                phone_input.text = phone_value or ""
+                phone_input.text = self._extract_phone(user)
 
             upi_input = self.ids.get("upi_input")
             if upi_input is not None:
@@ -381,12 +367,7 @@ class SettingsScreen(Screen):
         user_phone = ""
         if storage:
             user = storage.get_user() or {}
-            user_phone = (
-                user.get("phone")
-                or user.get("phone_number")
-                or user.get("mobile")
-                or ""
-            ).strip()
+            user_phone = self._extract_phone(user)
 
         if not user_phone:
             phone_input = self.ids.get("phone_input")
@@ -397,6 +378,29 @@ class SettingsScreen(Screen):
 
     def _auto_resize_label(self, instance, _value):
         instance.text_size = instance.size
+
+    def _extract_phone(self, user: dict) -> str:
+        if not isinstance(user, dict):
+            return ""
+        candidates = [
+            "phone",
+            "phone_number",
+            "phoneNumber",
+            "phone_no",
+            "contact_phone",
+            "contactPhone",
+            "mobile",
+            "mobile_number",
+            "mobileNumber",
+            "mobile_no",
+            "mobileNo",
+            "contact",
+        ]
+        for key in candidates:
+            value = user.get(key)
+            if value:
+                return str(value).strip()
+        return ""
 
     # ------------------ Wallet portal helpers ------------------
     def _resolve_wallet_base_url(self) -> str:
