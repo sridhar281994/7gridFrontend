@@ -67,7 +67,21 @@ class SettingsScreen(Screen):
                     storage.set_user(user)
 
                     def update_inputs(dt):
-                        self._populate_user_inputs(user)
+                        if self.ids.get("name_input"):
+                            self.ids.name_input.text = user.get("name") or ""
+                        if self.ids.get("upi_input"):
+                            self.ids.upi_input.text = user.get("upi_id") or ""
+                        if self.ids.get("desc_input"):
+                            self.ids.desc_input.text = user.get("description") or ""
+
+                        phone_value = self._extract_phone(user)
+                        phone_input = self.ids.get("phone_input")
+                        if phone_input:
+                            phone_input.text = phone_value
+
+                        # Keep originals synced for OTP validation
+                        self._original_upi = user.get("upi_id") or ""
+                        self._original_paypal = user.get("paypal_id") or ""
 
                     Clock.schedule_once(update_inputs, 0)
             except Exception as e:
