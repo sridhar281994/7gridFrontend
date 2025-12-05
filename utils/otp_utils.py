@@ -10,6 +10,7 @@ BACKEND_BASE = os.getenv("BACKEND_BASE", "https://spin-api-pba3.onrender.com").r
 # - Set OTP_VERIFY_SSL=true in env to enforce cert validation
 # - Default is False because some laptops have corp/root-ca issues
 VERIFY_SSL = os.getenv("OTP_VERIFY_SSL", "false").lower() == "true"
+PASSWORD_RESET_PATH = os.getenv("PASSWORD_RESET_PATH", "/auth/reset-password")
 
 # Networking timeouts / retries
 TIMEOUT = float(os.getenv("OTP_HTTP_TIMEOUT", "40")) # per-request timeout
@@ -112,6 +113,35 @@ def send_otp_phone(phone: str) -> Dict[str, Any]:
 
 def verify_otp_phone(phone: str, otp: str) -> Dict[str, Any]:
     return verify_otp(phone, otp)
+
+
+def reset_password(
+    new_password: str,
+    *,
+    token: Optional[str] = None,
+    phone: Optional[str] = None,
+    otp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Reset account password after OTP verification.
+
+    Args:
+        new_password: Desired password value.
+        token: Optional bearer token (if backend expects authenticated change).
+        phone: Optional phone identifier (if backend requires it).
+        otp: Optional OTP value (for backends that verify in the same request).
+    """
+
+    payload: Dict[str, Any] = {"password": new_password}
+    if not token:
+        if phone:
+            payload["phone"] = str(phone).strip()
+        if otp:
+            payload["otp"] = str(otp).strip()
+        if not (phone and otp):
+            raise ValueError("reset_password requires either token or (phone + otp).")
+
+    return _request("POST", PASSWORD_RESET_PATH, json=payload, token=token)
 
 
 # -------------

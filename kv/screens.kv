@@ -152,6 +152,15 @@
                 font_size: sp(18)
                 on_release: root.verify_and_login()
 
+            Button:
+                text: "Forgot Password?"
+                size_hint_y: None
+                height: dp(38)
+                font_size: sp(16)
+                background_color: (0, 0, 0, 0)
+                color: (1, 1, 1, 0.9)
+                on_release: root.open_forgot_password()
+
         Button:
             text: "Back"
             font_size: sp(18)
@@ -160,6 +169,175 @@
             pos_hint: {"x": 0.02, "y": 0.02}
             background_color: (0.2, 0.2, 0.2, 0.8)
             on_release: root.go_back()
+
+<ForgotPasswordScreen>:
+    name: "forgot_password"
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: 1, 1, 1, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+                source: "assets/login.png"
+
+        BoxLayout:
+            orientation: "vertical"
+            size_hint: 0.85, 0.6
+            pos_hint: {"center_x": 0.5, "center_y": 0.55}
+            spacing: dp(15)
+            padding: dp(20)
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.4
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [20]
+
+            Label:
+                text: "Forgot Password"
+                font_size: sp(24)
+                color: 1, 1, 1, 1
+                halign: "center"
+                valign: "middle"
+                text_size: self.width, None
+                size_hint_y: None
+                height: self.texture_size[1] + dp(20)
+
+            TextInput:
+                id: phone_input
+                hint_text: "Enter registered phone"
+                input_filter: "int"
+                max_text_length: 10
+                multiline: False
+                font_size: sp(18)
+                size_hint_y: None
+                height: dp(45)
+                background_color: (1, 1, 1, 0.85)
+                foreground_color: (0, 0, 0, 1)
+
+            Button:
+                text: "Send OTP"
+                size_hint_y: None
+                height: dp(45)
+                font_size: sp(18)
+                disabled: root.is_processing
+                on_release: root.send_reset_otp()
+
+            TextInput:
+                id: otp_input
+                hint_text: "Enter OTP"
+                multiline: False
+                font_size: sp(18)
+                size_hint_y: None
+                height: dp(45)
+                background_color: (1, 1, 1, 0.85)
+                foreground_color: (0, 0, 0, 1)
+                disabled: not root.otp_stage_ready
+
+            Button:
+                id: verify_btn
+                text: "Verify OTP"
+                size_hint_y: None
+                height: dp(45)
+                font_size: sp(18)
+                disabled: (not root.otp_stage_ready) or root.is_processing
+                on_release: root.verify_otp_and_continue()
+
+        Button:
+            text: "Back"
+            font_size: sp(18)
+            size_hint: None, None
+            size: dp(100), dp(45)
+            pos_hint: {"x": 0.02, "y": 0.02}
+            background_color: (0.2, 0.2, 0.2, 0.8)
+            on_release: root.go_back()
+
+<ResetPasswordScreen>:
+    name: "reset_password"
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: 1, 1, 1, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+                source: "assets/login.png"
+
+        BoxLayout:
+            orientation: "vertical"
+            size_hint: 0.85, 0.5
+            pos_hint: {"center_x": 0.5, "center_y": 0.55}
+            spacing: dp(15)
+            padding: dp(20)
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.4
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [20]
+
+            Label:
+                text: "Set a new password"
+                font_size: sp(24)
+                color: 1, 1, 1, 1
+                halign: "center"
+                valign: "middle"
+                text_size: self.width, None
+                size_hint_y: None
+                height: self.texture_size[1] + dp(15)
+
+            Label:
+                text: "Phone: " + (root.current_phone or "--")
+                font_size: sp(16)
+                color: 1, 1, 1, 0.9
+                size_hint_y: None
+                height: dp(30)
+
+            TextInput:
+                id: password_input
+                hint_text: "New password"
+                password: True
+                multiline: False
+                font_size: sp(18)
+                size_hint_y: None
+                height: dp(45)
+                background_color: (1, 1, 1, 0.85)
+                foreground_color: (0, 0, 0, 1)
+
+            TextInput:
+                id: confirm_password_input
+                hint_text: "Confirm password"
+                password: True
+                multiline: False
+                font_size: sp(18)
+                size_hint_y: None
+                height: dp(45)
+                background_color: (1, 1, 1, 0.85)
+                foreground_color: (0, 0, 0, 1)
+
+            Button:
+                text: "Save Password"
+                size_hint_y: None
+                height: dp(45)
+                font_size: sp(18)
+                disabled: root.is_processing
+                on_release: root.save_new_password()
+
+        BoxLayout:
+            size_hint: 1, None
+            height: dp(55)
+            padding: dp(20)
+
+            Button:
+                text: "Back"
+                font_size: sp(18)
+                size_hint: None, None
+                size: dp(120), dp(45)
+                background_color: (0.2, 0.2, 0.2, 0.8)
+                on_release: root.go_back()
 
 <RegisterScreen>:
     name: "register"
