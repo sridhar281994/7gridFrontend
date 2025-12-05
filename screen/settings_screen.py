@@ -236,7 +236,7 @@ class SettingsScreen(Screen):
             halign="center",
             valign="middle",
         )
-        status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+        status_label.bind(size=self._auto_resize_label)
 
         layout = BoxLayout(orientation="vertical", spacing=10, padding=10)
         info_label = Label(
@@ -246,7 +246,7 @@ class SettingsScreen(Screen):
             halign="center",
             valign="middle",
         )
-        info_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+        info_label.bind(size=self._auto_resize_label)
         save_btn = Button(
             text="Save",
             size_hint_y=None,
@@ -371,6 +371,9 @@ class SettingsScreen(Screen):
             or ""
         ).strip()
 
+    def _auto_resize_label(self, instance, _value):
+        instance.text_size = instance.size
+
     # ------------------ Wallet portal helpers ------------------
     def _resolve_wallet_base_url(self) -> str:
         if storage:
@@ -469,7 +472,7 @@ class SettingsScreen(Screen):
                         size_hint_y=None,
                         height=30,
                     )
-                    lbl.bind(size=lambda inst, val: setattr(inst, "text_size", inst.size))
+                    lbl.bind(size=self._auto_resize_label)
                     layout.add_widget(lbl)
 
                 scroll = ScrollView(size_hint=(1, 1))
