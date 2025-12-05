@@ -37,14 +37,16 @@ class SettingsScreen(Screen):
             if self.sound:
                 self.sound.loop = True
 
+        # refresh wallet balance
         self.refresh_wallet_balance()
 
+        # preload profile picture
         if storage:
             user = storage.get_user() or {}
             if user.get("profile_image"):
                 self.profile_image = user["profile_image"]
-            self._populate_user_inputs(user)
 
+        # 🔄 preload name, upi, description, phone from backend
         token = storage.get_token() if storage else None
         backend = storage.get_backend_url() if storage else None
 
@@ -61,7 +63,22 @@ class SettingsScreen(Screen):
                 if resp.status_code == 200:
                     user = resp.json()
                     storage.set_user(user)
-                    self._populate_user_inputs(user)
+
+                    def update_inputs(dt):
+                        if self.ids.get("name_input"):
+                            self.ids.name_input.text = user.get("name") or ""
+                        if self.ids.get("upi_input"):
+                            self.ids.upi_input.text = user.get("upi_id") or ""
+                        if self.ids.get("desc_input"):
+                            self.ids.desc_input.text = user.get("description") or ""
+                        if self.ids.get("phone_input"):
+                            self.ids.phone_input.text = user.get("phone") or ""
+
+                        # keep original values sync'd for OTP validation
+                        self._original_upi = user.get("upi_id") or ""
+                        self._original_paypal = user.get("paypal_id") or ""
+
+                    Clock.schedule_once(update_inputs, 0)
             except Exception as e:
                 print(f"[WARN] Failed to preload settings: {e}")
 
@@ -361,15 +378,22 @@ class SettingsScreen(Screen):
         threading.Thread(target=worker, daemon=True).start()
 
     def _get_user_phone(self):
-        if not storage:
-            return ""
-        user = storage.get_user() or {}
-        return (
-            user.get("phone")
-            or user.get("phone_number")
-            or user.get("mobile")
-            or ""
-        ).strip()
+        user_phone = ""
+        if storage:
+            user = storage.get_user() or {}
+            user_phone = (
+                user.get("phone")
+                or user.get("phone_number")
+                or user.get("mobile")
+                or ""
+            ).strip()
+
+        if not user_phone:
+            phone_input = self.ids.get("phone_input")
+            if phone_input:
+                user_phone = phone_input.text.strip()
+
+        return user_phone
 
     def _auto_resize_label(self, instance, _value):
         instance.text_size = instance.size
