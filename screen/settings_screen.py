@@ -14,16 +14,10 @@ import requests
 import os
 import webbrowser
 
-from utils.settings_utils import save_user_settings
 try:
     from utils import storage
 except Exception:
     storage = None
-
-try:
-    from utils.otp_utils import send_otp
-except Exception:
-    send_otp = None
 
 
 class SettingsScreen(Screen):
@@ -220,6 +214,14 @@ class SettingsScreen(Screen):
         return any(key in payload for key in ("upi_id", "paypal_id"))
 
     def _prompt_payment_otp(self, payload, token, backend):
+        phone = self._get_user_phone()
+        if not phone:
+            self.show_popup("Error", "Add a verified phone number before updating payment info.")
+            return
+        if not phone.isdigit():
+            self.show_popup("Error", "Phone number must contain digits only for OTP verification.")
+            return
+
         otp_input = TextInput(
             hint_text="Enter OTP from email",
             password=True,
@@ -271,72 +273,45 @@ class SettingsScreen(Screen):
             if len(otp_code) < 4:
                 status_label.text = "Enter the OTP sent to your email."
                 return
+
+            def worker():
+                try:
+                    self._verify_payment_otp(backend, phone, otp_code)
+                except Exception as exc:
+                    Clock.schedule_once(lambda dt, msg=str(exc): self.show_popup("Error", msg), 0)
+                    return
+                Clock.schedule_once(lambda dt: self._submit_settings(payload, token, backend), 0)
+
+            threading.Thread(target=worker, daemon=True).start()
             popup.dismiss()
-            self._submit_settings(payload, token, backend, otp_code)
 
         save_btn.bind(on_release=verify_and_save)
 
         popup.open()
-        self._send_payment_otp_email(token, backend, status_label)
+        self._send_payment_otp_email(backend, phone, status_label)
 
-    def _send_payment_otp_email(self, token, backend, status_label=None):
-        if not (token and backend):
+    def _send_payment_otp_email(self, backend, phone, status_label=None):
+        if not backend:
             if status_label:
-                status_label.text = "Missing auth details for OTP request."
+                status_label.text = "Backend URL missing."
             else:
-                self.show_popup("Error", "Missing token or backend.")
+                self.show_popup("Error", "Missing backend.")
             return
-
-        email = ""
-        phone = ""
-        if storage:
-            user = storage.get_user() or {}
-            email = (
-                user.get("email")
-                or user.get("email_id")
-                or user.get("contact_email")
-            )
-            phone = (
-                user.get("phone")
-                or user.get("phone_number")
-                or user.get("mobile")
-                or ""
-            )
 
         if status_label:
-            target_desc = email or "your registered email"
-            status_label.text = f"Sending OTP to {target_desc}..."
-
-        if not (phone and phone.isdigit()):
-            message = "No registered phone number found for OTP verification."
-
-            def notify_no_phone(_dt):
-                if status_label:
-                    status_label.text = message
-                else:
-                    self.show_popup("Error", message)
-
-            Clock.schedule_once(notify_no_phone, 0)
-            return
+            status_label.text = f"Sending OTP to {phone}..."
 
         def worker():
             try:
-                if send_otp is None:
-                    raise RuntimeError("OTP service unavailable. Please update utils.otp_utils.")
-
-                data = send_otp(phone)
-                ok = bool(data.get("ok", True)) if isinstance(data, dict) else True
-                message = (
-                    data.get("message")
-                    if isinstance(data, dict)
-                    else "OTP sent successfully."
+                resp = requests.post(
+                    f"{backend}/auth/send-otp",
+                    json={"phone": phone},
+                    timeout=10,
+                    verify=False,
                 )
-                if not message:
-                    message = "OTP sent successfully." if ok else "Failed to send OTP."
-                if not ok:
-                    raise Exception(message)
-                if email:
-                    message = f"OTP sent to {email}. Check your inbox."
+                if resp.status_code not in (200, 201):
+                    raise RuntimeError(resp.text or "Failed to send OTP.")
+                message = "OTP sent successfully. Please check your phone/email."
             except Exception as exc:
                 message = f"OTP request failed: {exc}"
 
@@ -350,17 +325,24 @@ class SettingsScreen(Screen):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _submit_settings(self, payload, token, backend, otp_code=None):
-        request_payload = dict(payload)
-        if otp_code:
-            request_payload["otp"] = otp_code
+    def _verify_payment_otp(self, backend, phone, otp_code):
+        resp = requests.post(
+            f"{backend}/auth/verify-otp",
+            json={"phone": phone, "otp": otp_code},
+            timeout=10,
+            verify=False,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(resp.text or "OTP verification failed.")
+        return resp.json()
 
+    def _submit_settings(self, payload, token, backend):
         def worker():
             try:
                 resp = requests.patch(
                     f"{backend}/users/me",
                     headers={"Authorization": f"Bearer {token}"},
-                    json=request_payload,
+                    json=payload,
                     timeout=10,
                     verify=False,
                 )
@@ -377,6 +359,17 @@ class SettingsScreen(Screen):
                 Clock.schedule_once(lambda dt: self.show_popup("Error", f"Request failed: {e}"), 0)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _get_user_phone(self):
+        if not storage:
+            return ""
+        user = storage.get_user() or {}
+        return (
+            user.get("phone")
+            or user.get("phone_number")
+            or user.get("mobile")
+            or ""
+        ).strip()
 
     # ------------------ Wallet portal helpers ------------------
     def _resolve_wallet_base_url(self) -> str:
