@@ -8,27 +8,29 @@ from kivy.clock import Clock
 from kivy.uix.filechooser import FileChooserIconView
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
-from kivy.uix.scrollview import ScrollView
-import threading
+from kivy.metrics import dp
+from kivy.core.window import Window
 import requests
 import os
-import webbrowser
 
-from utils.settings_utils import save_user_settings
+from screen.settings_wallet import WalletActionsMixin
 try:
     from utils import storage
 except Exception:
     storage = None
 
 
-class SettingsScreen(Screen):
+class SettingsScreen(WalletActionsMixin, Screen):
     music_playing = BooleanProperty(False)
     profile_image = StringProperty("assets/default.png")  # bound to KV
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._original_upi = ""
+        self._original_paypal = ""
         self._otp_payload = None
+        self._cached_phone = ""
+        self._phone_refresh_inflight = False
 
     def on_pre_enter(self):
         if not hasattr(self, "sound"):
@@ -68,7 +70,7 @@ class SettingsScreen(Screen):
             except Exception as e:
                 print(f"[WARN] Failed to preload settings: {e}")
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._run_async(worker)
 
     # ------------------ Audio ------------------
     def toggle_audio(self):
@@ -125,15 +127,15 @@ class SettingsScreen(Screen):
                                 user = storage.get_user() or {}
                                 user["profile_image"] = new_url
                                 storage.set_user(user)
-                            Clock.schedule_once(lambda dt: self.show_popup("Success", "Profile picture updated!"), 0)
+                            Clock.schedule_once(lambda dt: self.show_popup("Success", "Pic saved"), 0)
                         else:
                             err = resp.text
-                            Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", f"Upload failed: {msg}"), 0)
+                            Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", "Upload fail", msg), 0)
                     except Exception as e:
                         err = str(e)
-                        Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", f"Upload failed: {msg}"), 0)
+                        Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", "Upload fail", msg), 0)
 
-                threading.Thread(target=worker, daemon=True).start()
+                self._run_async(worker)
             popup.dismiss()
 
         btn_select.bind(on_release=select_and_upload)
@@ -145,8 +147,7 @@ class SettingsScreen(Screen):
         name = self.ids.name_input.text.strip()
         desc = self.ids.desc_input.text.strip()
         upi = self.ids.upi_input.text.strip()
-        phone = self.ids.phone_input.text.strip()
-
+        paypal = self.ids.paypal_input.text.strip()
         payload = {}
         if name:
             payload["name"] = name
@@ -154,37 +155,98 @@ class SettingsScreen(Screen):
             payload["description"] = desc
         if upi:
             payload["upi_id"] = upi
+        if paypal:
+            payload["paypal_id"] = paypal
 
         if not payload:
-            self.show_popup("Nothing to update", "Please edit a field first.")
+            self.show_popup("Update", "Edit first")
             return
 
         token = storage.get_token() if storage else None
         backend = storage.get_backend_url() if storage else None
         if not (token and backend):
-            self.show_popup("Error", "Missing token or backend")
+            self.show_popup("Error", "Login need")
             return
 
-        # determine whether UPI change needs OTP
-        if self._upi_changed(payload):
-            phone_for_otp = self._get_user_phone()
-            if not phone_for_otp:
-                self.show_popup("Error", "Add a verified phone number before updating payment info.")
-                return
-            if not phone_for_otp.isdigit():
-                self.show_popup("Error", "Phone number should contain digits only for OTP verification.")
-                return
-            self._prompt_payment_otp(payload, phone_for_otp, token, backend)
+        # determine whether payment change needs OTP
+        if self._payment_info_changed(payload):
+            self._handle_upi_payment_change(payload, token, backend)
             return
 
         self._submit_settings(payload, token, backend)
 
-    def _upi_changed(self, payload):
-        if "upi_id" not in payload:
-            return False
+    def _payment_info_changed(self, payload):
         user = storage.get_user() if storage else None
-        original = (user or {}).get("upi_id") or self._original_upi or ""
-        return payload["upi_id"].strip() != original.strip()
+        payload_upi = payload.get("upi_id")
+        payload_paypal = payload.get("paypal_id")
+        if payload_upi is None and payload_paypal is None:
+            return False
+
+        original_upi = (user or {}).get("upi_id") or self._original_upi or ""
+        original_paypal = (user or {}).get("paypal_id") or self._original_paypal or ""
+
+        if payload_upi is not None and payload_upi.strip() != original_upi.strip():
+            return True
+        if payload_paypal is not None and payload_paypal.strip() != original_paypal.strip():
+            return True
+        return False
+
+    def _handle_upi_payment_change(self, payload, token, backend):
+        raw_phone = self._get_user_phone()
+        otp_phone = self._sanitize_phone_for_otp(raw_phone)
+        if otp_phone:
+            self._prompt_payment_otp(payload, otp_phone, token, backend)
+            return
+        if raw_phone:
+            self.show_popup("Error", "Phone digits")
+            return
+        self._refresh_phone_and_retry(payload, token, backend)
+
+    def _refresh_phone_and_retry(self, payload, token, backend):
+        if self._phone_refresh_inflight:
+            self.show_popup("Info", "Wait phone")
+            return
+        if not (token and backend):
+            self.show_popup("Error", "Login again")
+            return
+
+        self._phone_refresh_inflight = True
+
+        def worker():
+            fetched_phone = ""
+            error_msg = ""
+            try:
+                resp = requests.get(
+                    f"{backend}/users/me",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                    verify=False,
+                )
+                if resp.status_code == 200:
+                    user = resp.json()
+                    fetched_phone = self._extract_phone(user)
+                    if storage:
+                        storage.set_user(user)
+                    Clock.schedule_once(lambda dt: self._apply_user_inputs(user), 0)
+                else:
+                    error_msg = resp.text or f"HTTP {resp.status_code}"
+            except Exception as exc:
+                error_msg = str(exc)
+
+            def finish(_dt):
+                self._phone_refresh_inflight = False
+                otp_phone = self._sanitize_phone_for_otp(fetched_phone)
+                if otp_phone:
+                    self._prompt_payment_otp(payload, otp_phone, token, backend)
+                else:
+                    if error_msg:
+                        self.show_popup("Error", "Phone fetch fail", error_msg)
+                    else:
+                        self.show_popup("Error", "Add phone")
+
+            Clock.schedule_once(finish, 0)
+
+        self._run_async(worker)
 
     def _prompt_payment_otp(self, payload, phone, token, backend):
         otp_input = TextInput(
@@ -236,11 +298,11 @@ class SettingsScreen(Screen):
                 try:
                     self._verify_payment_otp(phone, code, backend)
                 except Exception as exc:
-                    Clock.schedule_once(lambda dt, msg=str(exc): self.show_popup("Error", msg), 0)
+                    Clock.schedule_once(lambda dt, msg=str(exc): self.show_popup("Error", "OTP fail", msg), 0)
                     return
                 Clock.schedule_once(lambda dt: self._submit_settings(payload, token, backend), 0)
 
-            threading.Thread(target=task, daemon=True).start()
+            self._run_async(task)
             popup.dismiss()
 
         save_btn.bind(on_release=verify_and_save)
@@ -268,11 +330,11 @@ class SettingsScreen(Screen):
                 if status_label:
                     status_label.text = message
                 else:
-                    self.show_popup("OTP", message)
+                    self.show_popup("OTP", "OTP info", message)
 
             Clock.schedule_once(update_label, 0)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._run_async(worker)
 
     def _verify_payment_otp(self, phone, otp_code, backend):
         resp = requests.post(
@@ -300,45 +362,64 @@ class SettingsScreen(Screen):
                     if storage:
                         storage.set_user(user)
                     Clock.schedule_once(lambda dt: self._apply_user_inputs(user), 0)
-                    Clock.schedule_once(lambda dt: self.show_popup("Success", "Settings updated!"), 0)
+                    Clock.schedule_once(lambda dt: self.show_popup("Success", "Save done"), 0)
                     Clock.schedule_once(lambda dt: self.refresh_wallet_balance(), 0)
                 else:
                     Clock.schedule_once(
-                        lambda dt, msg=resp.text or "Unknown error": self.show_popup("Error", f"Update failed: {msg}"),
+                        lambda dt, msg=resp.text or "Unknown error": self.show_popup("Error", "Save fail", msg),
                         0,
                     )
             except Exception as e:
-                Clock.schedule_once(lambda dt, msg=str(e): self.show_popup("Error", f"Request failed: {msg}"), 0)
+                Clock.schedule_once(lambda dt, msg=str(e): self.show_popup("Error", "Save fail", msg), 0)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._run_async(worker)
 
     def _apply_user_inputs(self, user):
         if not user:
             return
         self._original_upi = user.get("upi_id") or ""
+        self._original_paypal = user.get("paypal_id") or ""
+        phone_value = self._extract_phone(user)
+        if phone_value:
+            self._cached_phone = phone_value
 
         def updater(_dt):
             if self.ids.get("name_input"):
                 self.ids.name_input.text = user.get("name") or ""
             if self.ids.get("upi_input"):
                 self.ids.upi_input.text = user.get("upi_id") or ""
+            if self.ids.get("paypal_input"):
+                self.ids.paypal_input.text = user.get("paypal_id") or ""
             if self.ids.get("desc_input"):
                 self.ids.desc_input.text = user.get("description") or ""
             if self.ids.get("phone_input"):
-                self.ids.phone_input.text = self._extract_phone(user)
+                self.ids.phone_input.text = self._cached_phone
 
         Clock.schedule_once(updater, 0)
 
     def _get_user_phone(self):
+        if self._cached_phone:
+            return self._cached_phone
         if storage:
             user = storage.get_user() or {}
             phone = self._extract_phone(user)
             if phone:
+                self._cached_phone = phone
                 return phone
         phone_input = self.ids.get("phone_input")
         if phone_input:
-            return phone_input.text.strip()
+            phone = phone_input.text.strip()
+            if phone:
+                self._cached_phone = phone
+            return phone
         return ""
+
+    @staticmethod
+    def _sanitize_phone_for_otp(phone: str) -> str:
+        if not phone:
+            return ""
+        digits_only = "".join(ch for ch in phone if ch.isdigit())
+        return digits_only if len(digits_only) >= 10 else ""
 
     def _extract_phone(self, user: dict) -> str:
         if not isinstance(user, dict):
@@ -361,211 +442,63 @@ class SettingsScreen(Screen):
                 return str(value).strip()
         return ""
 
-    # ------------------ Recharge ------------------
-    def recharge(self):
-        """Recharge wallet securely using Razorpay Payment Link."""
-        box = BoxLayout(orientation="vertical", spacing=5, padding=5)
-        ti = TextInput(hint_text="Enter recharge amount", multiline=False, input_filter="int")
-        box.add_widget(ti)
-        btn = Button(text="Submit", size_hint_y=None, height=40)
-        box.add_widget(btn)
-        popup = Popup(title="Recharge", content=box, size_hint=(0.8, 0.4))
+    def show_popup(self, title: str, message: str, detail: str | None = None, duration: float = 2.5):
+        """Responsive popup that auto-closes with concise text."""
+        primary = self._simple_words(message)
+        lines = [primary]
+        if detail:
+            lines.append(detail.strip())
 
-        def do_recharge(amount: int):
-            token = storage.get_token() if storage else None
-            backend = storage.get_backend_url() if storage else None
+        body = "\n".join(line for line in lines if line)
+        label = Label(text=body, halign="center", valign="middle")
+        label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
 
-            def worker():
-                try:
-                    resp = requests.post(
-                        f"{backend}/wallet/recharge/create-link",
-                        headers={"Authorization": f"Bearer {token}"},
-                        json={"amount": amount},
-                        timeout=15,
-                        verify=False,
-                    )
-                    data = resp.json()
-                    url = data.get("short_url")
-                    if not url:
-                        raise Exception("No payment link returned")
+        box = BoxLayout(padding=dp(12))
+        box.add_widget(label)
 
-                    Clock.schedule_once(lambda dt: webbrowser.open(url), 0)
-                    Clock.schedule_once(
-                        lambda dt: self.show_popup("Info", "Complete payment in UPI app. Refresh wallet after payment."),
-                        0,
-                    )
-                except Exception as e:
-                    err = str(e)
-                    Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", msg), 0)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        def submit(_):
-            try:
-                amount = int(ti.text.strip())
-                if amount <= 0:
-                    raise ValueError
-                do_recharge(amount)
-                popup.dismiss()
-            except Exception:
-                self.show_popup("Error", "Invalid amount")
-
-        btn.bind(on_release=submit)
+        popup = Popup(
+            title=title,
+            content=box,
+            size_hint=(0.8, None),
+            height=self._popup_height(),
+            auto_dismiss=True,
+        )
         popup.open()
-
-    # ------------------ Withdraw ------------------
-    def withdraw(self):
-        """Withdraw securely with balance validation."""
-        token = storage.get_token() if storage else None
-        backend = storage.get_backend_url() if storage else None
-        user = storage.get_user() or {}
-        balance = user.get("wallet_balance") or 0
-
-        if not (token and backend):
-            self.show_popup("Error", "Not logged in")
-            return
-
-        box = BoxLayout(orientation="vertical", spacing=5, padding=5)
-        ti = TextInput(hint_text="Enter withdraw amount", multiline=False, input_filter="int")
-        upi = TextInput(hint_text="Enter your UPI ID", multiline=False)
-        box.add_widget(ti)
-        box.add_widget(upi)
-        btn = Button(text="Withdraw", size_hint_y=None, height=40)
-        box.add_widget(btn)
-        popup = Popup(title="Withdraw", content=box, size_hint=(0.8, 0.5))
-
-        def submit(_):
-            try:
-                amount = int(ti.text.strip())
-                upi_id = upi.text.strip()
-                if amount <= 0 or not upi_id:
-                    raise ValueError("Invalid input")
-                if amount > balance:
-                    self.show_popup("Error", "Insufficient wallet balance")
-                    return
-
-                def worker():
-                    try:
-                        resp = requests.post(
-                            f"{backend}/wallet/withdraw/request",
-                            headers={"Authorization": f"Bearer {token}"},
-                            json={"amount": amount, "upi_id": upi_id},
-                            timeout=10,
-                            verify=False,
-                        )
-                        if resp.status_code == 200:
-                            Clock.schedule_once(
-                                lambda dt: self.show_popup("Success", f"Withdrawn ₹{amount} (Pending approval)"),
-                                0,
-                            )
-                            Clock.schedule_once(lambda dt: self.refresh_wallet_balance(), 0)
-                        else:
-                            err = resp.text
-                            Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", f"Withdraw failed: {msg}"), 0)
-                    except Exception as e:
-                        err = str(e)
-                        Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", f"Withdraw failed: {msg}"), 0)
-
-                threading.Thread(target=worker, daemon=True).start()
-                popup.dismiss()
-            except Exception as e:
-                self.show_popup("Error", f"Invalid input: {e}")
-
-        btn.bind(on_release=submit)
-        popup.open()
-
-    # ------------------ Wallet History ------------------
-    def show_wallet_history(self):
-        """Fetch and display last 20 wallet transactions from backend."""
-        token = storage.get_token() if storage else None
-        backend = storage.get_backend_url() if storage else None
-        if not (token and backend):
-            self.show_popup("Error", "Not logged in or backend missing")
-            return
-
-        def worker():
-            try:
-                resp = requests.get(
-                    f"{backend}/wallet/history",
-                    headers={"Authorization": f"Bearer {token}"},
-                    params={"limit": 20},
-                    timeout=10,
-                    verify=False,
-                )
-                if resp.status_code != 200:
-                    raise Exception(resp.text)
-                data = resp.json()
-                txs = data if isinstance(data, list) else data.get("transactions", [])
-                if not txs:
-                    Clock.schedule_once(lambda dt: self.show_popup("Wallet History", "No transactions found."), 0)
-                    return
-
-                layout = BoxLayout(orientation="vertical", spacing=5, padding=10, size_hint_y=None)
-                layout.bind(minimum_height=layout.setter("height"))
-
-                for tx in txs:
-                    lbl = Label(
-                        text=f"[{tx['timestamp'][:16]}] {tx['type']} ₹{tx['amount']} ({tx['status']})",
-                        halign="left",
-                        valign="middle",
-                        size_hint_y=None,
-                        height=30,
-                    )
-                    lbl.bind(size=lambda inst, val: setattr(inst, "text_size", inst.size))
-                    layout.add_widget(lbl)
-
-                scroll = ScrollView(size_hint=(1, 1))
-                scroll.add_widget(layout)
-
-                popup = Popup(
-                    title="Wallet History (Last 20)",
-                    content=scroll,
-                    size_hint=(0.9, 0.7),
-                )
-                Clock.schedule_once(lambda dt: popup.open(), 0)
-
-            except Exception as e:
-                err = str(e)
-                Clock.schedule_once(lambda dt, msg=err: self.show_popup("Error", f"Failed to fetch history: {msg}"), 0)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    # ------------------ Wallet Refresh ------------------
-    def refresh_wallet_balance(self):
-        """Fetch fresh wallet balance from backend and update storage + UI."""
-        token = storage.get_token() if storage else None
-        backend = storage.get_backend_url() if storage else None
-
-        def worker():
-            balance_text = "Wallet: ₹0"
-            if token and backend:
-                try:
-                    resp = requests.get(
-                        f"{backend}/users/me",
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=10,
-                        verify=False,
-                    )
-                    if resp.status_code == 200:
-                        user = resp.json()
-                        if storage:
-                            storage.set_user(user)
-                        balance = user.get("wallet_balance") or 0
-                        balance_text = f"Wallet: ₹{balance}"
-                except Exception as e:
-                    print(f"[WARN] Wallet refresh failed: {e}")
-
-            def update_label(dt):
-                wallet_lbl = self.ids.get("wallet_label")
-                if wallet_lbl:
-                    wallet_lbl.text = balance_text
-
-            Clock.schedule_once(update_label, 0)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    # ------------------ Popup helper ------------------
-    def show_popup(self, title: str, message: str):
-        popup = Popup(title=title, content=Label(text=message), size_hint=(0.7, 0.3))
-        popup.open()
+        Clock.schedule_once(lambda dt: popup.dismiss(), duration)
         return popup
+
+    def _popup_height(self):
+        base = self.height or Window.height or 640
+        return max(min(base * 0.3, dp(360)), dp(160))
+
+    @staticmethod
+    def _simple_words(text: str, limit: int = 3) -> str:
+        if not text:
+            return ""
+        replacements = {
+            "failed": "fail",
+            "failure": "fail",
+            "missing": "miss",
+            "please": "",
+            "invalid": "bad",
+            "complete": "finish",
+            "payment": "pay",
+            "number": "num",
+            "digits": "digits",
+            "before": "before",
+            "updating": "update",
+            "updated": "update",
+        }
+        words = []
+        for raw in text.split():
+            clean = raw.strip(",.!?:;").lower()
+            clean = replacements.get(clean, clean)
+            if not clean:
+                continue
+            words.append(clean)
+            if len(words) >= limit:
+                break
+        if not words:
+            return text.strip()
+        return " ".join(words).title()
+
