@@ -42,6 +42,22 @@ class LoginScreen(Screen):
         if self.manager:
             self.manager.current = "welcome"
 
+    def open_forgot_password(self) -> None:
+        """Navigate to the forgot password flow, pre-filling the phone number."""
+        if not self.manager:
+            return
+
+        phone = _safe_text(self, "phone_input")
+        try:
+            forgot_screen = self.manager.get_screen("forgot_password")
+        except Exception:
+            forgot_screen = None
+
+        if forgot_screen and hasattr(forgot_screen, "prefill_phone"):
+            forgot_screen.prefill_phone(phone)
+
+        self.manager.current = "forgot_password"
+
     # ---------- UI actions (bound in KV) ----------
     def send_otp_to_user(self) -> None:
         phone = _safe_text(self, "phone_input")

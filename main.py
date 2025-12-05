@@ -8,6 +8,8 @@ from screens.register_screen import RegisterScreen
 from screens.settings_screen import SettingsScreen
 from screens.stage_screen import StageScreen
 from screens.dice_game_screen import DiceGameScreen
+from screens.forgot_password_screen import ForgotPasswordScreen
+from screens.reset_password_screen import ResetPasswordScreen
 
 # Optional: only if you later add a UserMatchScreen
 try:
@@ -41,6 +43,8 @@ class DiceApp(App):
         self.sm.add_widget(WelcomeScreen(name='welcome'))
         self.sm.add_widget(LoginScreen(name='login'))
         self.sm.add_widget(RegisterScreen(name='register'))
+        self.sm.add_widget(ForgotPasswordScreen(name='forgot_password'))
+        self.sm.add_widget(ResetPasswordScreen(name='reset_password'))
         self.sm.add_widget(SettingsScreen(name='settings'))
         self.sm.add_widget(StageScreen(name='stage'))
         self.sm.add_widget(DiceGameScreen(name='dicegame'))

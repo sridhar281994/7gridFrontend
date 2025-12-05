@@ -13,7 +13,7 @@ from kivy.core.window import Window
 import requests
 import os
 
-from screen.settings_wallet import WalletActionsMixin
+from screens.settings_wallet import WalletActionsMixin
 try:
     from utils import storage
 except Exception:
