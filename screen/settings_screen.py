@@ -27,6 +27,7 @@ class SettingsScreen(WalletActionsMixin, Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._original_upi = ""
+        self._original_paypal = ""
         self._otp_payload = None
         self._cached_phone = ""
         self._phone_refresh_inflight = False
@@ -146,8 +147,7 @@ class SettingsScreen(WalletActionsMixin, Screen):
         name = self.ids.name_input.text.strip()
         desc = self.ids.desc_input.text.strip()
         upi = self.ids.upi_input.text.strip()
-        phone = self.ids.phone_input.text.strip()
-
+        paypal = self.ids.paypal_input.text.strip()
         payload = {}
         if name:
             payload["name"] = name
@@ -155,6 +155,8 @@ class SettingsScreen(WalletActionsMixin, Screen):
             payload["description"] = desc
         if upi:
             payload["upi_id"] = upi
+        if paypal:
+            payload["paypal_id"] = paypal
 
         if not payload:
             self.show_popup("Update", "Edit first")
@@ -166,19 +168,28 @@ class SettingsScreen(WalletActionsMixin, Screen):
             self.show_popup("Error", "Login need")
             return
 
-        # determine whether UPI change needs OTP
-        if self._upi_changed(payload):
+        # determine whether payment change needs OTP
+        if self._payment_info_changed(payload):
             self._handle_upi_payment_change(payload, token, backend)
             return
 
         self._submit_settings(payload, token, backend)
 
-    def _upi_changed(self, payload):
-        if "upi_id" not in payload:
-            return False
+    def _payment_info_changed(self, payload):
         user = storage.get_user() if storage else None
-        original = (user or {}).get("upi_id") or self._original_upi or ""
-        return payload["upi_id"].strip() != original.strip()
+        payload_upi = payload.get("upi_id")
+        payload_paypal = payload.get("paypal_id")
+        if payload_upi is None and payload_paypal is None:
+            return False
+
+        original_upi = (user or {}).get("upi_id") or self._original_upi or ""
+        original_paypal = (user or {}).get("paypal_id") or self._original_paypal or ""
+
+        if payload_upi is not None and payload_upi.strip() != original_upi.strip():
+            return True
+        if payload_paypal is not None and payload_paypal.strip() != original_paypal.strip():
+            return True
+        return False
 
     def _handle_upi_payment_change(self, payload, token, backend):
         raw_phone = self._get_user_phone()
@@ -367,6 +378,7 @@ class SettingsScreen(WalletActionsMixin, Screen):
         if not user:
             return
         self._original_upi = user.get("upi_id") or ""
+        self._original_paypal = user.get("paypal_id") or ""
         phone_value = self._extract_phone(user)
         if phone_value:
             self._cached_phone = phone_value
@@ -376,6 +388,8 @@ class SettingsScreen(WalletActionsMixin, Screen):
                 self.ids.name_input.text = user.get("name") or ""
             if self.ids.get("upi_input"):
                 self.ids.upi_input.text = user.get("upi_id") or ""
+            if self.ids.get("paypal_input"):
+                self.ids.paypal_input.text = user.get("paypal_id") or ""
             if self.ids.get("desc_input"):
                 self.ids.desc_input.text = user.get("description") or ""
             if self.ids.get("phone_input"):
