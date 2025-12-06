@@ -240,11 +240,15 @@ def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
 
     try:
         return _request("POST", "/auth/login/request-otp", json=payload)
-    except Exception as primary_err:
-        phone = payload.get("phone")
-        if phone:
-            return send_otp(phone)
-        raise primary_err
+    except requests.HTTPError as err:
+        status = getattr(err.response, "status_code", None)
+        if status == 404:
+            phone = payload.get("phone")
+            if phone:
+                return send_otp(phone)
+        raise
+    except Exception:
+        raise
 
 
 def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str, Any]:
@@ -259,8 +263,12 @@ def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str,
 
     try:
         return _request("POST", "/auth/login/verify-otp", json=payload)
-    except Exception as primary_err:
-        phone = payload.get("phone")
-        if phone:
-            return verify_otp(phone, otp)
-        raise primary_err
+    except requests.HTTPError as err:
+        status = getattr(err.response, "status_code", None)
+        if status == 404:
+            phone = payload.get("phone")
+            if phone:
+                return verify_otp(phone, otp)
+        raise
+    except Exception:
+        raise
