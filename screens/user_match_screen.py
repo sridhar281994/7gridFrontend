@@ -229,8 +229,10 @@ class UserMatchScreen(Screen):
             players.append(bot["name"])
             ids[1] = bot["id"]
             self._bot_cache["p2"] = bot
-            self.ids.p2_pic.source = bot["pic"]
-            self.ids.p2_name.text = bot["name"]
+            if "p2_pic" in self.ids:
+                self.ids.p2_pic.source = bot["pic"]
+            if "p2_name" in self.ids:
+                self.ids.p2_name.text = bot["name"]
             self.player3_name = ""
         else:
             bots = random.sample(BOT_PROFILES, 2)
@@ -239,10 +241,14 @@ class UserMatchScreen(Screen):
             ids[2] = bots[1]["id"]
             self._bot_cache["p2"] = bots[0]
             self._bot_cache["p3"] = bots[1]
-            self.ids.p2_pic.source = bots[0]["pic"]
-            self.ids.p2_name.text = bots[0]["name"]
-            self.ids.p3_pic.source = bots[1]["pic"]
-            self.ids.p3_name.text = bots[1]["name"]
+            if "p2_pic" in self.ids:
+                self.ids.p2_pic.source = bots[0]["pic"]
+            if "p2_name" in self.ids:
+                self.ids.p2_name.text = bots[0]["name"]
+            if "p3_pic" in self.ids:
+                self.ids.p3_pic.source = bots[1]["pic"]
+            if "p3_name" in self.ids:
+                self.ids.p3_name.text = bots[1]["name"]
 
         self._go_game(players, ids)
 

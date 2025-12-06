@@ -10,7 +10,7 @@ from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.behaviors import ButtonBehavior
-from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale, Color, RoundedRectangle
+from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.animation import Animation
@@ -76,8 +76,8 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         self.stop_spin()
 
         spin_seq = (
-            Animation(rotation_angle=360, d=0.25, t="out_cubic")  # clockwise
-            + Animation(rotation_angle=-360, d=0.3, t="out_cubic")  # anticlockwise
+            Animation(rotation_angle=360, d=0.28, t="out_cubic")  # clockwise
+            + Animation(rotation_angle=0, d=0.32, t="out_cubic")  # anticlockwise back to rest
         )
 
         zoom = (
@@ -171,9 +171,6 @@ class DiceGameScreen(Screen):
         self._ping_failures = 0
         self._last_ping_time = 0
         self._ping_worker_active = False
-        self._stage_banner = None
-
-        self.bind(size=lambda *_: self._position_stage_banner())
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -280,7 +277,6 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
-        Clock.schedule_once(lambda dt: self._ensure_stage_banner(), 0.1)
         mid = storage.get_current_match() if storage else None
 
         # bot vs online
@@ -410,7 +406,6 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
-        Clock.schedule_once(lambda dt: self._ensure_stage_banner(), 0.05)
         if self._online:
             self._start_online_sync()
         else:
@@ -1053,75 +1048,6 @@ class DiceGameScreen(Screen):
         self._jump_coin_to(coin, (safe_x, safe_y), jump_height=dp(32), duration=0.55)
         self._positions[idx] = pos
         self._debug(f"[MOVE] Player {idx} now at {pos}")
-
-    def _format_stage_banner_text(self):
-        tagline = "Roll • Race • Repeat"
-        if self.stage_amount:
-            return f"{self.stage_label}\n{tagline}"
-        return f"{self.stage_label}\n{tagline}"
-
-    def _ensure_stage_banner(self, *_):
-        layer = self._root_float()
-        if layer is None:
-            return
-        if not self.stage_label:
-            return
-        if self._stage_banner is None:
-            banner = Label(
-                text=self._format_stage_banner_text(),
-                halign="center",
-                valign="middle",
-                size_hint=(None, None),
-                opacity=0,
-                color=(1, 0.95, 0.6, 1),
-                bold=True,
-                padding=(dp(18), dp(8)),
-            )
-            banner.bind(
-                texture_size=lambda inst, *_: setattr(
-                    inst, "size", (inst.texture_size[0] + dp(36), inst.texture_size[1] + dp(24))
-                )
-            )
-            banner.bind(size=lambda *_: self._refresh_stage_banner_bg(), pos=lambda *_: self._refresh_stage_banner_bg())
-            with banner.canvas.before:
-                self._stage_banner_color = Color(0.1, 0.1, 0.1, 0.6)
-                self._stage_banner_bg = RoundedRectangle(radius=[(18, 18), (18, 18), (18, 18), (18, 18)])
-            layer.add_widget(banner)
-            self._stage_banner = banner
-        self._stage_banner.text = self._format_stage_banner_text()
-        self._position_stage_banner()
-        Animation.cancel_all(self._stage_banner, "opacity", "color")
-        fade_in = Animation(opacity=0.95, d=0.45, t="out_back")
-        fade_in.start(self._stage_banner)
-        glow = Animation(color=(1, 0.7, 0.3, 1), d=1.0, t="in_out_quad") + Animation(
-            color=(0.7, 0.9, 1, 1), d=1.0, t="in_out_quad"
-        )
-        glow.repeat = True
-        glow.start(self._stage_banner)
-        self._refresh_stage_banner_bg()
-
-    def _position_stage_banner(self, *_):
-        if not self._stage_banner:
-            return
-        layer = self._root_float()
-        if not layer:
-            return
-        width = layer.width if layer.width else Window.width
-        height = layer.height if layer.height else Window.height
-        self._stage_banner.center = (width / 2.0, height - dp(70))
-        self._refresh_stage_banner_bg()
-
-    def _refresh_stage_banner_bg(self):
-        if not (self._stage_banner and hasattr(self, "_stage_banner_bg")):
-            return
-        self._stage_banner_bg.pos = (
-            self._stage_banner.x - dp(4),
-            self._stage_banner.y - dp(4),
-        )
-        self._stage_banner_bg.size = (
-            self._stage_banner.width + dp(8),
-            self._stage_banner.height + dp(8),
-        )
 
     def _apply_positions_to_board(self, positions, reverse=False):
         self._ensure_coin_widgets()
