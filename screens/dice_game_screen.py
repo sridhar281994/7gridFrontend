@@ -10,7 +10,7 @@ from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.behaviors import ButtonBehavior
-from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale
+from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale, Color, RoundedRectangle
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.animation import Animation
@@ -18,6 +18,7 @@ from kivy.factory import Factory
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.core.window import Window
 
 API_URL = "https://spin-api-pba3.onrender.com"
 
@@ -75,19 +76,19 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         self.stop_spin()
 
         spin_seq = (
-            Animation(rotation_angle=360, d=0.25, t="linear")
-            + Animation(rotation_angle=720, d=0.25, t="linear")
-            + Animation(rotation_angle=540, d=0.25, t="linear")
+            Animation(rotation_angle=360, d=0.25, t="out_cubic")  # clockwise
+            + Animation(rotation_angle=-360, d=0.3, t="out_cubic")  # anticlockwise
         )
 
         zoom = (
-            Animation(scale_value=1.2, d=0.15, t="out_quad")
-            + Animation(scale_value=1.0, d=0.2, t="out_quad")
+            Animation(scale_value=1.25, d=0.2, t="out_back")
+            + Animation(scale_value=0.95, d=0.15, t="in_out_quad")
+            + Animation(scale_value=1.0, d=0.15, t="out_quad")
         )
 
+        self._anim = spin_seq
         zoom.start(self)
         spin_seq.start(self)
-        self._anim = spin_seq
 
         def set_final_face(*_):
             img_path = os.path.join("assets", "dice", f"dice{result}.png")
@@ -166,6 +167,13 @@ class DiceGameScreen(Screen):
         self._auto_from_timer = False
         self._last_roll_time = 0
         self._server_turn = None
+        self._heartbeat_evt = None
+        self._ping_failures = 0
+        self._last_ping_time = 0
+        self._ping_worker_active = False
+        self._stage_banner = None
+
+        self.bind(size=lambda *_: self._position_stage_banner())
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -272,6 +280,7 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
+        Clock.schedule_once(lambda dt: self._ensure_stage_banner(), 0.1)
         mid = storage.get_current_match() if storage else None
 
         # bot vs online
@@ -287,9 +296,7 @@ class DiceGameScreen(Screen):
                 except Exception:
                     pass
             self._debug("[MODE] Bot/Offline mode forced (no server sync)")
-            self._game_active = True
-            self._current_player = 0
-            self._highlight_turn()
+            self._reset_game_state()
         else:
             self._online = True
             self.match_id = mid
@@ -299,6 +306,7 @@ class DiceGameScreen(Screen):
 
     def on_leave(self, *_):
         self._stop_online_sync()
+        self._stop_backend_heartbeat()
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -402,6 +410,7 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
+        Clock.schedule_once(lambda dt: self._ensure_stage_banner(), 0.05)
         if self._online:
             self._start_online_sync()
         else:
@@ -946,19 +955,58 @@ class DiceGameScreen(Screen):
         self._ensure_coin_widgets()
         layer = self._root_float()
 
+        def portrait_offset(idx):
+            if self._num_players == 3:
+                mapping = {
+                    0: (-dp(8), 0),
+                    1: (dp(8), 0),
+                    2: (0, dp(4)),
+                }
+                return mapping.get(idx, (0, 0))
+            return {0: (-dp(6), 0), 1: (dp(6), 0)}.get(idx, (0, 0))
+
         def place(pic_id, coin_img, idx):
             pic = self.ids.get(pic_id)
             if not (coin_img and pic):
                 return
             cx, cy = self._map_center_to_parent(layer, pic)
-            coin_img.size = (dp(24), dp(24))
-            coin_img.center = (cx, cy - dp(50))
+            base = dp(24) if self._num_players == 2 else dp(21)
+            coin_img.size = (base, base)
+            off_x, off_y = portrait_offset(idx)
+            target = (cx + off_x, cy - dp(50) + off_y)
+            safe_x, safe_y = self._clamp_to_bounds(target, coin_img.size)
+            coin_img.center = (safe_x, safe_y)
             coin_img.opacity = 1
 
         place("p1_pic", self._coins[0], 0)
         place("p2_pic", self._coins[1], 1)
         if self._num_players == 3:
             place("p3_pic", self._coins[2], 2)
+
+    def _clamp_to_bounds(self, pos, size):
+        layer = self._root_float()
+        width = layer.width if layer.width else Window.width
+        height = layer.height if layer.height else Window.height
+        half_w = size[0] / 2.0
+        half_h = size[1] / 2.0
+        x = min(max(pos[0], half_w), max(width - half_w, half_w))
+        y = min(max(pos[1], half_h), max(height - half_h, half_h))
+        return x, y
+
+    def _jump_coin_to(self, coin, target_xy, *, jump_height=dp(28), duration=0.5):
+        """Animate a playful jump arc towards the target center."""
+        if not coin or not target_xy:
+            return
+
+        current_x, current_y = coin.center
+        target_x, target_y = target_xy
+        mid_x = (current_x + target_x) / 2.0
+        apex_y = max(current_y, target_y) + jump_height
+
+        Animation.cancel_all(coin, "center")
+        ascent = Animation(center=(mid_x, apex_y), d=duration * 0.45, t="out_cubic")
+        landing = Animation(center=(target_x, target_y), d=duration * 0.55, t="in_quad")
+        (ascent + landing).start(coin)
 
     def _move_coin_to_box(self, idx: int, pos: int, reverse=False):
         box = self.ids.get(f"box_{pos}")
@@ -969,19 +1017,30 @@ class DiceGameScreen(Screen):
         Animation.cancel_all(coin)
 
         h = getattr(box, "height", dp(50))
-        size_px = max(dp(40), min(dp(64), h * 0.9))
+        size_px = max(dp(34), min(dp(56), h * 0.9))
+        if self._num_players == 3:
+            size_px = min(size_px, dp(40))
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
-        offsets = {0: -dp(14), 1: 0, 2: dp(14)}
-        stack_x = offsets.get(idx, 0)
-        stack_y = 0
+        if self._num_players == 3:
+            offsets = {
+                0: (-dp(16), dp(10)),
+                1: (dp(16), dp(10)),
+                2: (0, -dp(12)),
+            }
+        else:
+            offsets = {
+                0: (-dp(12), 0),
+                1: (dp(12), 0),
+            }
+        stack_x, stack_y = offsets.get(idx, (0, 0))
 
         if reverse:
             start_anchor = self.ids.get("box_0")
             if start_anchor:
                 tx, ty = self._map_center_to_parent(layer, start_anchor)
-                Animation(center=(tx, ty), d=0.5, t="out_quad").start(coin)
+                self._jump_coin_to(coin, (tx, ty), jump_height=dp(48), duration=0.6)
                 self._positions[idx] = 0
                 self._debug(f"[REVERSE] Player {idx} reset to start box.")
             else:
@@ -989,9 +1048,80 @@ class DiceGameScreen(Screen):
             return
 
         tx, ty = self._map_center_to_parent(layer, box)
-        Animation(center=(tx + stack_x, ty + stack_y), d=0.5, t="out_quad").start(coin)
+        target = (tx + stack_x, ty + stack_y)
+        safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
+        self._jump_coin_to(coin, (safe_x, safe_y), jump_height=dp(32), duration=0.55)
         self._positions[idx] = pos
         self._debug(f"[MOVE] Player {idx} now at {pos}")
+
+    def _format_stage_banner_text(self):
+        tagline = "Roll • Race • Repeat"
+        if self.stage_amount:
+            return f"{self.stage_label}\n{tagline}"
+        return f"{self.stage_label}\n{tagline}"
+
+    def _ensure_stage_banner(self, *_):
+        layer = self._root_float()
+        if layer is None:
+            return
+        if not self.stage_label:
+            return
+        if self._stage_banner is None:
+            banner = Label(
+                text=self._format_stage_banner_text(),
+                halign="center",
+                valign="middle",
+                size_hint=(None, None),
+                opacity=0,
+                color=(1, 0.95, 0.6, 1),
+                bold=True,
+                padding=(dp(18), dp(8)),
+            )
+            banner.bind(
+                texture_size=lambda inst, *_: setattr(
+                    inst, "size", (inst.texture_size[0] + dp(36), inst.texture_size[1] + dp(24))
+                )
+            )
+            banner.bind(size=lambda *_: self._refresh_stage_banner_bg(), pos=lambda *_: self._refresh_stage_banner_bg())
+            with banner.canvas.before:
+                self._stage_banner_color = Color(0.1, 0.1, 0.1, 0.6)
+                self._stage_banner_bg = RoundedRectangle(radius=[(18, 18), (18, 18), (18, 18), (18, 18)])
+            layer.add_widget(banner)
+            self._stage_banner = banner
+        self._stage_banner.text = self._format_stage_banner_text()
+        self._position_stage_banner()
+        Animation.cancel_all(self._stage_banner, "opacity", "color")
+        fade_in = Animation(opacity=0.95, d=0.45, t="out_back")
+        fade_in.start(self._stage_banner)
+        glow = Animation(color=(1, 0.7, 0.3, 1), d=1.0, t="in_out_quad") + Animation(
+            color=(0.7, 0.9, 1, 1), d=1.0, t="in_out_quad"
+        )
+        glow.repeat = True
+        glow.start(self._stage_banner)
+        self._refresh_stage_banner_bg()
+
+    def _position_stage_banner(self, *_):
+        if not self._stage_banner:
+            return
+        layer = self._root_float()
+        if not layer:
+            return
+        width = layer.width if layer.width else Window.width
+        height = layer.height if layer.height else Window.height
+        self._stage_banner.center = (width / 2.0, height - dp(70))
+        self._refresh_stage_banner_bg()
+
+    def _refresh_stage_banner_bg(self):
+        if not (self._stage_banner and hasattr(self, "_stage_banner_bg")):
+            return
+        self._stage_banner_bg.pos = (
+            self._stage_banner.x - dp(4),
+            self._stage_banner.y - dp(4),
+        )
+        self._stage_banner_bg.size = (
+            self._stage_banner.width + dp(8),
+            self._stage_banner.height + dp(8),
+        )
 
     def _apply_positions_to_board(self, positions, reverse=False):
         self._ensure_coin_widgets()
@@ -1016,6 +1146,7 @@ class DiceGameScreen(Screen):
             self._poll_ev = Clock.schedule_interval(lambda dt: self._poll_state_once(), 0.9)
         # ensure we have the latest state immediately
         self._sync_remote_turn("start-sync", trusted=True)
+        self._start_backend_heartbeat()
 
     def _stop_online_sync(self):
         if self._ws:
@@ -1033,6 +1164,68 @@ class DiceGameScreen(Screen):
             except Exception:
                 pass
             self._poll_ev = None
+        self._stop_backend_heartbeat()
+
+    def _start_backend_heartbeat(self):
+        if not self._online:
+            return
+        self._stop_backend_heartbeat()
+        self._heartbeat_evt = Clock.schedule_interval(lambda dt: self._backend_ping_tick(), 5)
+        Clock.schedule_once(lambda dt: self._backend_ping_tick(), 0)
+
+    def _stop_backend_heartbeat(self):
+        if self._heartbeat_evt:
+            try:
+                self._heartbeat_evt.cancel()
+            except Exception:
+                pass
+            self._heartbeat_evt = None
+        self._ping_worker_active = False
+
+    def _backend_ping_tick(self, *_):
+        if self._ping_worker_active or not self._online:
+            return
+        backend = self._backend()
+        if not backend:
+            return
+        self._ping_worker_active = True
+
+        def worker():
+            success = False
+            headers = {"Authorization": f"Bearer {self._token()}"} if self._token() else {}
+            endpoints = [f"{backend}/health", f"{backend}/matches/ping"]
+            for endpoint in endpoints:
+                try:
+                    resp = requests.get(endpoint, headers=headers, timeout=3, verify=False)
+                    if resp.status_code < 500:
+                        success = True
+                        break
+                except Exception as e:
+                    self._debug(f"[PING][ERR] {e}")
+            Clock.schedule_once(lambda dt: self._handle_ping_result(success), 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_ping_result(self, success: bool):
+        self._ping_worker_active = False
+        if success:
+            self._ping_failures = 0
+            self._last_ping_time = time.time()
+            badge = self.ids.get("connection_badge")
+            if badge:
+                badge.text = "Connected"
+                badge.color = (0.1, 0.8, 0.3, 0.95)
+            return
+
+        self._ping_failures += 1
+        badge = self.ids.get("connection_badge")
+        if badge:
+            badge.text = "Reconnecting..."
+            badge.color = (1.0, 0.6, 0.2, 0.95) if self._ping_failures < 3 else (1.0, 0.2, 0.2, 0.95)
+
+        if self._ping_failures >= 3:
+            self._debug("[PING] consecutive failures → resync")
+            self._sync_remote_turn("heartbeat-recover", trusted=True)
 
     def _ws_worker(self):
         url = self._backend().replace("http", "ws") + f"/matches/ws/{self.match_id}"
@@ -1506,9 +1699,53 @@ class DiceGameScreen(Screen):
         names = [self.player1_name, self.player2_name, self.player3_name]
         pid = pids[idx] if idx < len(pids) else None
         name = names[idx] if idx < len(names) else f"Player {idx+1}"
-        self._open_player_popup(name, 0, self._resolve_avatar_source(idx, name, pid))
+        balance = self._resolve_player_wallet(idx)
+        desc = self._resolve_player_description(idx, name)
+        self._open_player_popup(name, balance, self._resolve_avatar_source(idx, name, pid), desc)
 
-    def _open_player_popup(self, name: str, balance: int, image_source: str):
+    def _resolve_player_wallet(self, idx: int):
+        if not storage:
+            return 0
+        user = storage.get_user() or {}
+        keys = ["wallet_balance", "wallet", "balance", "chips"]
+        if idx == 0:
+            for key in keys:
+                val = user.get(key)
+                if val is not None:
+                    return val
+        bag = storage.get_stakes_cache() if hasattr(storage, "get_stakes_cache") else []
+        if isinstance(bag, (list, tuple)) and idx < len(bag):
+            try:
+                return bag[idx]
+            except Exception:
+                return 0
+        return 0
+
+    def _resolve_player_description(self, idx: int, name: str):
+        fallback_descriptions = [
+            "Cold strategist who prefers safe climbs.",
+            "High-roller chasing instant jackpots.",
+            "Steady grinder who never skips a turn.",
+            "Wildcard player who thrives in chaos.",
+        ]
+        if storage:
+            profile = None
+            if idx == 0:
+                profile = storage.get_user()
+            elif hasattr(storage, "get_player_profiles"):
+                try:
+                    profiles = storage.get_player_profiles()  # type: ignore[attr-defined]
+                    if isinstance(profiles, (list, tuple)) and idx < len(profiles):
+                        profile = profiles[idx]
+                except Exception:
+                    profile = None
+            if isinstance(profile, dict):
+                for key in ("description", "bio", "about", "tagline"):
+                    if profile.get(key):
+                        return profile[key]
+        return fallback_descriptions[idx % len(fallback_descriptions)] + f" ({name.strip() or 'Player'})"
+
+    def _open_player_popup(self, name: str, balance: int, image_source: str, description: str):
         layout = BoxLayout(orientation="vertical", spacing=10, padding=12)
         layout.add_widget(Image(source=image_source, size_hint=(1, 0.65)))
         layout.add_widget(Label(text=name, halign="center", size_hint=(1, 0.175)))
@@ -1519,7 +1756,16 @@ class DiceGameScreen(Screen):
                 wallet_text = f"Wallet: ₹{int(round(float(balance)))}"
             except (TypeError, ValueError):
                 wallet_text = "Wallet: ₹0"
-        layout.add_widget(Label(text=wallet_text, halign="center", size_hint=(1, 0.175)))
+        wallet_lbl = Label(text=wallet_text, halign="center", size_hint=(1, 0.14))
+        layout.add_widget(wallet_lbl)
+        desc_lbl = Label(
+            text=description,
+            halign="center",
+            valign="middle",
+            size_hint=(1, 0.21),
+        )
+        desc_lbl.bind(size=lambda *_: setattr(desc_lbl, "text_size", desc_lbl.size))
+        layout.add_widget(desc_lbl)
         Popup(title="Player Info", content=layout, size_hint=(None, None), size=(300, 400)).open()
 
     # ---------- deprecated animator ----------
