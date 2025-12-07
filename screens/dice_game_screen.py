@@ -17,7 +17,7 @@ from kivy.animation import Animation
 from kivy.factory import Factory
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ListProperty
 from kivy.core.window import Window
 
 API_URL = "https://spin-api-pba3.onrender.com"
@@ -71,9 +71,17 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         if hasattr(self, "_scale"):
             self._scale.x = self._scale.y = float(self.scale_value)
 
-    def animate_spin(self, result: int):
+    def animate_spin(self, result: int, instant: bool = False):
         """Animate dice spin, then set the final face image."""
         self.stop_spin()
+
+        if instant:
+            img_path = os.path.join("assets", "dice", f"dice{result}.png")
+            if os.path.exists(img_path):
+                self._dice_image.source = img_path
+                self._dice_image.reload()
+            self.rotation_angle = 0
+            return
 
         spin_seq = (
             Animation(rotation_angle=360, d=0.28, t="out_cubic")  # clockwise
@@ -132,6 +140,7 @@ class DiceGameScreen(Screen):
     dice_result = StringProperty("")
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
+    chat_log = ListProperty([])
 
     player1_name = StringProperty("Player 1")
     player2_name = StringProperty("Player 2")
@@ -139,6 +148,7 @@ class DiceGameScreen(Screen):
 
     _current_player = NumericProperty(0)
     _game_active = BooleanProperty(False)
+    _num_players = NumericProperty(2)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -171,6 +181,8 @@ class DiceGameScreen(Screen):
         self._ping_failures = 0
         self._last_ping_time = 0
         self._ping_worker_active = False
+        self._connection_recover_ev = None
+        self._chat_messages = []
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -265,10 +277,17 @@ class DiceGameScreen(Screen):
                 while len(players) < 3:
                     players.append(None)
                 stake = storage.get_stake_amount()
-                self._num_players = storage.get_num_players() or 2
-                self.player1_name = players[0] or (storage.get_user().get("name") if storage.get_user() else "You")
+                stored_count = storage.get_num_players()
+                wants_three = stored_count == 3 or bool(players[2])
+                self._num_players = 3 if wants_three else 2
+                user = storage.get_user() or {}
+                fallback_name = user.get("name") or user.get("display_name") or "You"
+                self.player1_name = players[0] or fallback_name
                 self.player2_name = players[1] or "Bot"
-                self.player3_name = players[2] if self._num_players == 3 else ""
+                if self._num_players == 3:
+                    self.player3_name = players[2] or "Player 3"
+                else:
+                    self.player3_name = ""
                 if stake is not None:
                     self.stage_amount = int(stake)
                     self.stage_label = "Free Play" if stake == 0 else f"₹{stake} Bounty"
@@ -303,6 +322,7 @@ class DiceGameScreen(Screen):
     def on_leave(self, *_):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
+        self._clear_chat_messages()
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -344,6 +364,7 @@ class DiceGameScreen(Screen):
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        self._clear_chat_messages()
         if hasattr(self, "_forfeited_players"):
             self._forfeited_players.clear()
         else:
@@ -385,9 +406,15 @@ class DiceGameScreen(Screen):
 
     def set_stage_and_players(self, amount: int, p1: str, p2: str, p3: str = None, match_id=None):
         self.stage_amount = amount
+        stored_count = storage.get_num_players() if storage else None
+        wants_three = bool(p3) or stored_count == 3
+        self._num_players = 3 if wants_three else 2
         self.player1_name = p1 or "Player 1"
         self.player2_name = p2 or "Player 2"
-        self.player3_name = p3 or ""
+        if self._num_players == 3:
+            self.player3_name = p3 or "Player 3"
+        else:
+            self.player3_name = ""
         self.stage_label = "Free Play" if amount == 0 else f"₹{amount} Bounty"
         self.match_id = match_id
         self._online = bool(match_id)
@@ -538,8 +565,8 @@ class DiceGameScreen(Screen):
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
-            Clock.schedule_once(lambda dt: self._mark_roll_end(), 1.0)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
+            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
             return
 
         # ONLINE
@@ -788,6 +815,7 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._game_active = False
         self._winner_shown = False
+        self._clear_chat_messages()
         if self.manager:
             self.manager.current = "stage"
 
@@ -917,6 +945,30 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[TOAST][ERR] {e}")
 
+    # ---------- chat ----------
+    def send_chat_message(self, payload: str | None = None):
+        field = self.ids.get("chat_input")
+        text = payload if payload is not None else (field.text if field else "")
+        text = (text or "").strip()
+        if not text:
+            return
+        self._append_chat_message(text)
+        if field:
+            field.text = ""
+        scroll = self.ids.get("chat_scroll")
+        if scroll:
+            Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+
+    def _append_chat_message(self, text: str):
+        entry = f"You: {text}"
+        self._chat_messages.append(entry)
+        self._chat_messages = self._chat_messages[-12:]
+        self.chat_log = list(self._chat_messages)
+
+    def _clear_chat_messages(self):
+        self._chat_messages = []
+        self.chat_log = []
+
     def _animate_dice_and_apply_server(self, data, roll):
         if "dice_button" in self.ids:
             self.ids.dice_button.animate_spin(roll)
@@ -940,7 +992,7 @@ class DiceGameScreen(Screen):
 
         ensure(0, "assets/coins/red.png")
         ensure(1, "assets/coins/yellow.png")
-        if self.player3_name:
+        if self._num_players == 3:
             ensure(2, "assets/coins/green.png")
 
         self._bring_coins_to_front()
@@ -1017,17 +1069,11 @@ class DiceGameScreen(Screen):
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
-        if self._num_players == 3:
-            offsets = {
-                0: (-dp(16), dp(10)),
-                1: (dp(16), dp(10)),
-                2: (0, -dp(12)),
-            }
-        else:
-            offsets = {
-                0: (-dp(12), 0),
-                1: (dp(12), 0),
-            }
+        offsets = {
+            0: (0, 0),
+            1: (0, 0),
+            2: (0, 0),
+        }
         stack_x, stack_y = offsets.get(idx, (0, 0))
 
         if reverse:
@@ -1063,16 +1109,11 @@ class DiceGameScreen(Screen):
         size_px = max(dp(34), min(dp(56), h * 0.9))
         if self._num_players == 3:
             size_px = min(size_px, dp(40))
-            offsets = {
-                0: (-dp(16), dp(10)),
-                1: (dp(16), dp(10)),
-                2: (0, -dp(12)),
-            }
-        else:
-            offsets = {
-                0: (-dp(12), 0),
-                1: (dp(12), 0),
-            }
+        offsets = {
+            0: (0, 0),
+            1: (0, 0),
+            2: (0, 0),
+        }
         stack_x, stack_y = offsets.get(idx, (0, 0))
         coin.size = (size_px, size_px)
 
@@ -1142,6 +1183,7 @@ class DiceGameScreen(Screen):
                 pass
             self._poll_ev = None
         self._stop_backend_heartbeat()
+        self._cancel_pending_recovery()
 
     def _start_backend_heartbeat(self):
         if not self._online:
@@ -1158,6 +1200,33 @@ class DiceGameScreen(Screen):
                 pass
             self._heartbeat_evt = None
         self._ping_worker_active = False
+        self._cancel_pending_recovery()
+
+    def _cancel_pending_recovery(self):
+        if self._connection_recover_ev:
+            try:
+                self._connection_recover_ev.cancel()
+            except Exception:
+                pass
+            self._connection_recover_ev = None
+
+    def _schedule_online_recovery(self):
+        if (
+            self._connection_recover_ev
+            or not self._online
+            or not self.match_id
+            or not self._game_active
+        ):
+            return
+        self._debug("[SYNC] Scheduling connection recovery after heartbeat failures.")
+        self._connection_recover_ev = Clock.schedule_once(self._perform_online_recovery, 0.6)
+
+    def _perform_online_recovery(self, *_):
+        self._connection_recover_ev = None
+        if not self._online or not self.match_id or not self._game_active:
+            return
+        self._debug("[SYNC] Restarting online sync after repeated heartbeat failures.")
+        self._start_online_sync()
 
     def _backend_ping_tick(self, *_):
         if self._ping_worker_active or not self._online:
@@ -1173,12 +1242,12 @@ class DiceGameScreen(Screen):
             endpoints = [f"{backend}/health", f"{backend}/matches/ping"]
             for endpoint in endpoints:
                 try:
-                    resp = requests.get(endpoint, headers=headers, timeout=3, verify=False)
+                    resp = requests.get(endpoint, headers=headers, timeout=5, verify=False)
                     if resp.status_code < 500:
                         success = True
                         break
                 except Exception as e:
-                    self._debug(f"[PING][ERR] {e}")
+                    self._debug(f"[PING][ERR] {endpoint}: {e}")
             Clock.schedule_once(lambda dt: self._handle_ping_result(success), 0)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1188,6 +1257,7 @@ class DiceGameScreen(Screen):
         if success:
             self._ping_failures = 0
             self._last_ping_time = time.time()
+            self._cancel_pending_recovery()
             badge = self.ids.get("connection_badge")
             if badge:
                 badge.text = "Connected"
@@ -1203,6 +1273,8 @@ class DiceGameScreen(Screen):
         if self._ping_failures >= 3:
             self._debug("[PING] consecutive failures → resync")
             self._sync_remote_turn("heartbeat-recover", trusted=True)
+        if self._ping_failures >= 5:
+            self._schedule_online_recovery()
 
     def _ws_worker(self):
         url = self._backend().replace("http", "ws") + f"/matches/ws/{self.match_id}"
@@ -1655,14 +1727,14 @@ class DiceGameScreen(Screen):
             except Exception as e:
                 self._debug(f"[BOT][DICE][ERR] {e}")
 
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
 
             def _clear_flag_and_check():
                 self._bot_rolling = False
                 if self._game_active:
                     self._debug(f"[BOT TURN] Player {current} finished roll.")
 
-            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 1.5)
+            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 1.0)
 
         Clock.schedule_once(do_roll, delay)
 

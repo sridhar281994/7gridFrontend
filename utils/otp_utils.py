@@ -306,6 +306,8 @@ def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str,
         return data
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
+        if status in (401, 403):
+            raise InvalidCredentialsError("Incorrect password or identifier.") from err
         if status == 404:
             _LOGIN_OTP_ENDPOINT_AVAILABLE = False
             return _legacy_verify(err)
