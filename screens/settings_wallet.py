@@ -10,6 +10,8 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 
+from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
+
 try:
     from utils import storage
 except Exception:
@@ -204,26 +206,151 @@ class WalletActionsMixin:
 
     # ------------------ Wallet Portal ------------------
     def open_wallet_portal(self):
-        wallet_url = "https://wallet.srtech.co.in"
-        if storage and hasattr(storage, "get_wallet_url"):
-            try:
-                fetched = storage.get_wallet_url()
-                if fetched:
-                    wallet_url = fetched
-            except Exception:
-                pass
-
-        if not wallet_url:
-            self.show_popup("Error", "Wallet portal missing")
+        token, backend = self._require_auth()
+        if not (token and backend):
             return
 
-        try:
-            opened = webbrowser.open(wallet_url, new=2, autoraise=True)
-            if not opened:
-                raise RuntimeError("Browser refused to open link")
-            self.show_popup("Info", "Opening wallet site", wallet_url)
-        except Exception as err:
-            self.show_popup("Error", "Wallet open fail", str(err))
+        def worker():
+            try:
+                session_url = self._fetch_wallet_portal_link(token, backend)
+                if not session_url:
+                    raise RuntimeError("Wallet link missing")
+            except Exception as err:
+                Clock.schedule_once(
+                    lambda dt, msg=str(err): self.show_popup("Error", "Wallet open fail", msg),
+                    0,
+                )
+                return
+
+            def launch(_dt):
+                try:
+                    opened = webbrowser.open(session_url, new=2, autoraise=True)
+                    if not opened:
+                        raise RuntimeError("Browser refused link")
+                    self.show_popup("Info", "Opening wallet site", session_url)
+                except Exception as err:
+                    self.show_popup("Error", "Wallet open fail", str(err))
+
+            Clock.schedule_once(launch, 0)
+
+        self._run_async(worker)
+
+    def _fetch_wallet_portal_link(self, token: str, backend: str) -> str:
+        """Create a short-lived wallet session link from backend; fallback to tokenized base URL."""
+
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        payload = {"source": "app"}
+        candidates = [
+            ("POST", f"{backend}/wallet/portal/create-link", payload),
+            ("POST", f"{backend}/wallet/portal/link", payload),
+            ("GET", f"{backend}/wallet/portal/link", None),
+            ("POST", f"{backend}/wallet/portal", payload),
+            ("GET", f"{backend}/wallet/portal", None),
+            ("POST", f"{backend}/wallet/link", payload),
+            ("GET", f"{backend}/wallet/link", None),
+            ("POST", f"{backend}/wallet/create-link", payload),
+        ]
+
+        attempts: list[str] = []
+
+        def _parse_url(resp):
+            try:
+                data = resp.json()
+            except Exception:
+                data = resp.text or ""
+            return self._search_wallet_url(data)
+
+        for method, url, body in candidates:
+            try:
+                resp = requests.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=body if method != "GET" else None,
+                    params=body if method == "GET" else None,
+                    allow_redirects=False,
+                    timeout=10,
+                    verify=False,
+                )
+                if resp.status_code == 404:
+                    attempts.append(f"{method} {url} → 404")
+                    continue
+                if resp.status_code >= 400:
+                    attempts.append(f"{method} {url} → {resp.status_code}")
+                    continue
+                session_url = _parse_url(resp)
+                if not session_url:
+                    location = resp.headers.get("Location")
+                    if location and location.startswith("http"):
+                        session_url = location
+                if session_url:
+                    return session_url
+            except Exception as exc:
+                attempts.append(f"{method} {url}: {exc}")
+                continue
+
+        profile_paths = [
+            f"{backend}/wallet/portal-url",
+            f"{backend}/users/me/wallet-link",
+            f"{backend}/users/me/wallet",
+            f"{backend}/users/me/profile",
+            f"{backend}/users/me",
+        ]
+        for path in profile_paths:
+            try:
+                resp = requests.get(path, headers=headers, timeout=10, verify=False)
+                if resp.status_code != 200:
+                    attempts.append(f"GET {path} → {resp.status_code}")
+                    continue
+                data = resp.json()
+                session_url = self._search_wallet_url(data)
+                if session_url:
+                    return session_url
+            except Exception as exc:
+                attempts.append(f"GET {path}: {exc}")
+
+        base_url = None
+        if storage and hasattr(storage, "get_wallet_url"):
+            try:
+                base_url = storage.get_wallet_url()
+            except Exception:
+                base_url = None
+        if not base_url:
+            base_url = "https://wallet.srtech.co.in"
+
+        parsed = urlparse(base_url)
+        query = dict(parse_qsl(parsed.query))
+        if token:
+            for key in ("session_token", "token", "auth", "auth_token", "access_token"):
+                query.setdefault(key, token)
+        query.setdefault("source", "app")
+        rebuilt = parsed._replace(query=urlencode(query))
+        attempts.append(f"Fallback link={urlunparse(rebuilt)}")
+        raise RuntimeError("; ".join(attempts))
+
+    @staticmethod
+    def _search_wallet_url(payload) -> str:
+        def scan(node):
+            if isinstance(node, str):
+                val = node.strip()
+                if val.startswith("http") and "wallet" in val.lower():
+                    return val
+                return ""
+            if isinstance(node, dict):
+                for value in node.values():
+                    result = scan(value)
+                    if result:
+                        return result
+                return ""
+            if isinstance(node, (list, tuple, set)):
+                for value in node:
+                    result = scan(value)
+                    if result:
+                        return result
+                return ""
+            return ""
+
+        return scan(payload) or ""
 
     # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):

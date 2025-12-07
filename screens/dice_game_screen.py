@@ -10,7 +10,7 @@ from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.behaviors import ButtonBehavior
-from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale
+from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale, RoundedRectangle, Color
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.animation import Animation
@@ -123,6 +123,39 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 Factory.register("PolygonDice", cls=PolygonDice)
 
 
+MAX_CHAT_LEN = 50
+
+
+class ChatBubble(Label):
+    """Floating chat bubble that auto-sizes and paints its own rounded background."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("markup", False)
+        kwargs.setdefault("color", (1, 1, 1, 1))
+        kwargs.setdefault("font_size", dp(13))
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.halign = "center"
+        self.valign = "middle"
+        self.padding = (dp(14), dp(10))
+        self.text_size = (None, None)
+        with self.canvas.before:
+            Color(0.08, 0.08, 0.14, 0.88)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(16)])
+        self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
+
+    def _sync_size(self, *_):
+        width = min(dp(200), max(dp(90), self.texture_size[0] + dp(28)))
+        height = self.texture_size[1] + dp(20)
+        self.size = (width, height)
+        self.text_size = (width - dp(22), None)
+
+    def _update_rect(self, *_):
+        if hasattr(self, "_rect") and self._rect is not None:
+            self._rect.pos = self.pos
+            self._rect.size = self.size
+
+
 # ------------------------
 # Dice Game Screen
 # ------------------------
@@ -141,6 +174,7 @@ class DiceGameScreen(Screen):
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
     chat_log = ListProperty([])
+    chat_open = BooleanProperty(False)
 
     player1_name = StringProperty("Player 1")
     player2_name = StringProperty("Player 2")
@@ -183,6 +217,8 @@ class DiceGameScreen(Screen):
         self._ping_worker_active = False
         self._connection_recover_ev = None
         self._chat_messages = []
+        self._chat_bubble = None
+        self._chat_bubble_ev = None
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -323,6 +359,8 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
+        self.chat_open = False
+        self._hide_chat_bubble(instant=True)
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -952,12 +990,88 @@ class DiceGameScreen(Screen):
         text = (text or "").strip()
         if not text:
             return
+        if len(text) > MAX_CHAT_LEN:
+            text = text[:MAX_CHAT_LEN]
         self._append_chat_message(text)
+        self._show_chat_bubble(text)
         if field:
             field.text = ""
         scroll = self.ids.get("chat_scroll")
         if scroll:
             Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+
+    def toggle_chat_dropdown(self):
+        self.chat_open = not self.chat_open
+
+    # ---------- chat bubble ----------
+    def _chat_overlay(self):
+        return self.ids.get("ui_overlay") or self._root_float()
+
+    def _clamp_overlay_center(self, parent, target, size):
+        width = parent.width if parent.width else Window.width
+        height = parent.height if parent.height else Window.height
+        half_w = size[0] / 2.0
+        half_h = size[1] / 2.0
+        x = min(max(target[0], half_w + dp(4)), max(width - half_w - dp(4), half_w))
+        y = min(max(target[1], half_h + dp(4)), max(height - half_h - dp(4), half_h))
+        return x, y
+
+    def _show_chat_bubble(self, message: str):
+        parent = self._chat_overlay()
+        if not parent:
+            return
+
+        if not self._chat_bubble:
+            self._chat_bubble = ChatBubble()
+            parent.add_widget(self._chat_bubble)
+
+        bubble = self._chat_bubble
+        bubble.opacity = 0
+        bubble.text = message
+        bubble.texture_update()
+        bubble._sync_size()
+
+        anchor = self.ids.get("p1_pic")
+        if anchor:
+            ax, ay = self._map_center_to_parent(parent, anchor)
+        else:
+            ax, ay = parent.center
+
+        target = (ax + dp(70), ay - dp(10))
+        safe_x, safe_y = self._clamp_overlay_center(parent, target, bubble.size)
+        bubble.center = (safe_x, safe_y + dp(26))
+        Animation.cancel_all(bubble)
+        Animation(center=(safe_x, safe_y), opacity=1, d=0.22, t="out_back").start(bubble)
+
+        if self._chat_bubble_ev:
+            try:
+                self._chat_bubble_ev.cancel()
+            except Exception:
+                pass
+        self._chat_bubble_ev = Clock.schedule_once(lambda dt: self._hide_chat_bubble(), 4)
+
+    def _hide_chat_bubble(self, instant: bool = False):
+        bubble = getattr(self, "_chat_bubble", None)
+        if not bubble:
+            return
+        if self._chat_bubble_ev:
+            try:
+                self._chat_bubble_ev.cancel()
+            except Exception:
+                pass
+            self._chat_bubble_ev = None
+
+        def _finish(*_):
+            bubble.opacity = 0
+
+        if instant:
+            _finish()
+            return
+
+        Animation.cancel_all(bubble)
+        anim = Animation(opacity=0, d=0.3, t="in_quad")
+        anim.bind(on_complete=lambda *_: _finish())
+        anim.start(bubble)
 
     def _append_chat_message(self, text: str):
         entry = f"You: {text}"
