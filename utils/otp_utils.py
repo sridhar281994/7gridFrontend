@@ -228,6 +228,14 @@ def _login_identifier_payload(identifier: str) -> Dict[str, str]:
     return payload
 
 
+class InvalidCredentialsError(PermissionError):
+    """Raised when the backend reports wrong password/identifier."""
+
+
+class LegacyOtpUnavailable(RuntimeError):
+    """Raised when fallback OTP cannot run for non-phone identifiers."""
+
+
 def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
     """
     Trigger an OTP for login after validating identifier + password.
@@ -242,12 +250,15 @@ def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
         return _request("POST", "/auth/login/request-otp", json=payload)
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
+        if status in (401, 403):
+            raise InvalidCredentialsError("Incorrect password or identifier.") from err
         if status == 404:
             phone = payload.get("phone")
             if phone:
                 return send_otp(phone)
-        raise
-    except Exception:
+            raise LegacyOtpUnavailable(
+                "Secure OTP login requires using your registered phone number."
+            ) from err
         raise
 
 

@@ -93,13 +93,16 @@ class LoginScreen(Screen):
         def work():
             try:
                 data: Dict[str, Any] = request_login_otp(identifier, password)
-                ok = bool(data.get("ok", True))
-                msg = data.get("message") or (
-                    "OTP sent successfully." if ok else "Failed to send OTP."
-                )
-                _popup("Success" if ok else "Error", msg)
-            except Exception as e:
-                _popup("Error", f"Send OTP error:\n{e}")
+            except Exception as exc:
+                if isinstance(exc, PermissionError):
+                    _popup("Error", "Incorrect password. OTP not sent.")
+                    return
+                _popup("Error", f"Send OTP error:\n{exc}")
+                return
+
+            ok = bool(data.get("ok", True))
+            msg = data.get("message") or ("OTP sent successfully." if ok else "Failed to send OTP.")
+            _popup("Success" if ok else "Error", msg)
 
         Thread(target=work, daemon=True).start()
 
