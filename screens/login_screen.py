@@ -13,6 +13,8 @@ from utils.otp_utils import (
     request_login_otp,
     verify_login_with_otp,
     get_profile,
+    InvalidCredentialsError,
+    LegacyOtpUnavailable,
 )
 
 
@@ -94,12 +96,22 @@ class LoginScreen(Screen):
             try:
                 data: Dict[str, Any] = request_login_otp(identifier, password)
                 ok = bool(data.get("ok", True))
-                msg = data.get("message") or (
-                    "OTP sent successfully." if ok else "Failed to send OTP."
-                )
+                msg = data.get("message") or ("OTP sent successfully." if ok else "Failed to send OTP.")
                 _popup("Success" if ok else "Error", msg)
-            except Exception as e:
-                _popup("Error", f"Send OTP error:\n{e}")
+                return
+            except InvalidCredentialsError:
+                _popup("Error", "Incorrect password. OTP blocked.")
+                return
+            except LegacyOtpUnavailable:
+                _popup(
+                    "Info",
+                    "OTP login is currently available only with your registered phone number. "
+                    "Please enter that number to receive an OTP.",
+                )
+                return
+            except Exception as exc:
+                _popup("Error", f"Send OTP error:\n{exc}")
+                return
 
         Thread(target=work, daemon=True).start()
 

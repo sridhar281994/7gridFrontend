@@ -228,6 +228,14 @@ def _login_identifier_payload(identifier: str) -> Dict[str, str]:
     return payload
 
 
+class InvalidCredentialsError(PermissionError):
+    """Raised when the backend reports wrong password/identifier."""
+
+
+class LegacyOtpUnavailable(RuntimeError):
+    """Raised when fallback OTP cannot run for non-phone identifiers."""
+
+
 def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
     """
     Trigger an OTP for login after validating identifier + password.
@@ -240,11 +248,18 @@ def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
 
     try:
         return _request("POST", "/auth/login/request-otp", json=payload)
-    except Exception as primary_err:
-        phone = payload.get("phone")
-        if phone:
-            return send_otp(phone)
-        raise primary_err
+    except requests.HTTPError as err:
+        status = getattr(err.response, "status_code", None)
+        if status in (401, 403):
+            raise InvalidCredentialsError("Incorrect password or identifier.") from err
+        if status == 404:
+            phone = payload.get("phone")
+            if phone:
+                return send_otp(phone)
+            raise LegacyOtpUnavailable(
+                "Secure OTP login requires using your registered phone number."
+            ) from err
+        raise
 
 
 def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str, Any]:
@@ -259,8 +274,12 @@ def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str,
 
     try:
         return _request("POST", "/auth/login/verify-otp", json=payload)
-    except Exception as primary_err:
-        phone = payload.get("phone")
-        if phone:
-            return verify_otp(phone, otp)
-        raise primary_err
+    except requests.HTTPError as err:
+        status = getattr(err.response, "status_code", None)
+        if status == 404:
+            phone = payload.get("phone")
+            if phone:
+                return verify_otp(phone, otp)
+        raise
+    except Exception:
+        raise
