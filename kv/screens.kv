@@ -1297,83 +1297,112 @@
             id: coin_layer
             size_hint: 1, 1
 
-        # Emoji chat panel
-        BoxLayout:
-            id: chat_panel
-            orientation: "vertical"
+        # Emoji chat panel (compact dropdown)
+        AnchorLayout:
+            anchor_x: "left"
+            anchor_y: "bottom"
             size_hint: None, None
-            width: min(root.width * 0.45, dp(420))
-            height: dp(190)
-            pos_hint: {"x": 0.05, "y": 0.18}
-            spacing: dp(6)
-            padding: dp(8)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.45
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [dp(14)]
+            width: dp(90)
+            height: dp(90)
+            pos_hint: {"x": 0.03, "y": 0.3}
 
-            ScrollView:
-                id: chat_scroll
-                bar_width: 0
-                do_scroll_x: False
-                size_hint_y: 0.55
-                Label:
-                    id: chat_history
-                    text: "\\n".join(root.chat_log) if root.chat_log else "Tap an emoji or send a quick note"
-                    size_hint_y: None
-                    text_size: self.width, None
-                    halign: "left"
-                    valign: "top"
+            BoxLayout:
+                orientation: "vertical"
+                size_hint: None, None
+                width: dp(90)
+                height: self.minimum_height
+                spacing: dp(4)
+
+                ToggleButton:
+                    id: chat_toggle
+                    text: "💬"
+                    size_hint: None, None
+                    width: dp(90)
+                    height: dp(34)
+                    font_size: sp(16)
+                    background_normal: ""
+                    background_color: (0, 0, 0, 0.55)
                     color: 1, 1, 1, 1
-                    font_size: sp(14)
-                    height: self.texture_size[1]
 
-            BoxLayout:
-                size_hint_y: None
-                height: dp(42)
-                spacing: dp(6)
-                TextInput:
-                    id: chat_input
-                    hint_text: "Type a message"
-                    multiline: False
-                    font_size: sp(14)
-                    background_color: (1, 1, 1, 0.8)
-                    foreground_color: (0.1, 0.1, 0.15, 1)
-                    padding: [dp(10), dp(8), dp(10), dp(8)]
-                Button:
-                    text: "Send"
-                    font_size: sp(14)
-                    size_hint_x: None
-                    width: dp(70)
-                    on_release: root.send_chat_message()
+                BoxLayout:
+                    id: chat_dropdown
+                    orientation: "vertical"
+                    size_hint: None, None
+                    width: dp(90)
+                    height: dp(200) if chat_toggle.state == "down" else 0
+                    opacity: 1 if chat_toggle.state == "down" else 0
+                    disabled: chat_toggle.state != "down"
+                    padding: dp(6)
+                    spacing: dp(4)
+                    canvas.before:
+                        Color:
+                            rgba: 0, 0, 0, 0.5
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [dp(10)]
 
-            BoxLayout:
-                size_hint_y: None
-                height: dp(40)
-                spacing: dp(6)
-                Button:
-                    text: "😀"
-                    font_size: sp(18)
-                    on_release: root.send_chat_message("😀")
-                Button:
-                    text: "😎"
-                    font_size: sp(18)
-                    on_release: root.send_chat_message("😎")
-                Button:
-                    text: "😡"
-                    font_size: sp(18)
-                    on_release: root.send_chat_message("😡")
-                Button:
-                    text: "😢"
-                    font_size: sp(18)
-                    on_release: root.send_chat_message("😢")
-                Button:
-                    text: "🎉"
-                    font_size: sp(18)
-                    on_release: root.send_chat_message("🎉")
+                    ScrollView:
+                        id: chat_scroll
+                        size_hint_y: None
+                        height: dp(70)
+                        bar_width: 0
+                        do_scroll_x: False
+                        Label:
+                            id: chat_history
+                            text: "\\n".join(root.chat_log)
+                            size_hint_y: None
+                            text_size: self.width, None
+                            halign: "left"
+                            valign: "top"
+                            color: 1, 1, 1, 1
+                            font_size: sp(12)
+                            height: max(self.texture_size[1], dp(4))
+
+                    GridLayout:
+                        cols: 1
+                        size_hint_y: None
+                        height: dp(30) * 5
+                        spacing: dp(3)
+                        Button:
+                            text: "😀"
+                            font_size: sp(16)
+                            on_release: root.send_chat_message("😀")
+                        Button:
+                            text: "😎"
+                            font_size: sp(16)
+                            on_release: root.send_chat_message("😎")
+                        Button:
+                            text: "😡"
+                            font_size: sp(16)
+                            on_release: root.send_chat_message("😡")
+                        Button:
+                            text: "😢"
+                            font_size: sp(16)
+                            on_release: root.send_chat_message("😢")
+                        Button:
+                            text: "🎉"
+                            font_size: sp(16)
+                            on_release: root.send_chat_message("🎉")
+
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(34)
+                        spacing: dp(4)
+                        TextInput:
+                            id: chat_input
+                            hint_text: ""
+                            multiline: False
+                            font_size: sp(12)
+                            background_color: (1, 1, 1, 0.85)
+                            foreground_color: (0, 0, 0, 1)
+                            padding: [dp(6), dp(4), dp(6), dp(4)]
+                        Button:
+                            text: "Send"
+                            font_size: sp(12)
+                            size_hint_x: None
+                            width: dp(32)
+                            on_release: root.send_chat_message()
 
         # Exit button
         Button:

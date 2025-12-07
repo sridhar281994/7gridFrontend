@@ -564,9 +564,9 @@ class DiceGameScreen(Screen):
             self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
-                self.ids.dice_button.animate_spin(roll, instant=True)
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0)
-            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.2)
+                self.ids.dice_button.animate_spin(roll)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
+            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
             return
 
         # ONLINE
@@ -1721,20 +1721,20 @@ class DiceGameScreen(Screen):
 
             try:
                 if "dice_button" in self.ids and self.ids.dice_button:
-                    self.ids.dice_button.animate_spin(roll, instant=True)
+                    self.ids.dice_button.animate_spin(roll)
                 else:
                     self._debug("[BOT][WARN] dice_button not ready yet.")
             except Exception as e:
                 self._debug(f"[BOT][DICE][ERR] {e}")
 
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
 
             def _clear_flag_and_check():
                 self._bot_rolling = False
                 if self._game_active:
                     self._debug(f"[BOT TURN] Player {current} finished roll.")
 
-            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 0.3)
+            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 1.0)
 
         Clock.schedule_once(do_roll, delay)
 
