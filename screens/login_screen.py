@@ -1,20 +1,23 @@
 from threading import Thread
 from typing import Optional, Dict, Any
+
 from kivy.clock import Clock
-from kivy.uix.screenmanager import Screen
-from kivy.uix.popup import Popup
-from kivy.uix.label import Label
-from kivy.uix.button import Button
+from kivy.core.window import Window
+from kivy.properties import NumericProperty
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.screenmanager import Screen
 
 # frontend helpers
 from utils import storage
 from utils.otp_utils import (
-    request_login_otp,
-    verify_login_with_otp,
-    get_profile,
     InvalidCredentialsError,
     LegacyOtpUnavailable,
+    get_profile,
+    request_login_otp,
+    verify_login_with_otp,
 )
 
 
@@ -43,6 +46,20 @@ def _popup(title: str, msg: str) -> None:
 
 
 class LoginScreen(Screen):
+    font_scale = NumericProperty(1.0)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        Clock.schedule_once(self._update_font_scale, 0)
+
+    def on_size(self, *args):
+        self._update_font_scale()
+
+    def _update_font_scale(self, *_):
+        width = self.width or Window.width or 1
+        scale = max(0.8, min(1.2, width / 520.0))
+        self.font_scale = scale
+
     # ---------- navigation ----------
     def go_back(self):
         if self.manager:
@@ -100,7 +117,7 @@ class LoginScreen(Screen):
                 _popup("Success" if ok else "Error", msg)
                 return
             except InvalidCredentialsError:
-                _popup("Error", "Incorrect password. OTP blocked.")
+                _popup("Error", "Wrong password.")
                 return
             except LegacyOtpUnavailable:
                 _popup(
@@ -110,6 +127,9 @@ class LoginScreen(Screen):
                 )
                 return
             except Exception as exc:
+                if self._looks_like_wrong_password(exc):
+                    _popup("Error", "Wrong password.")
+                    return
                 _popup("Error", f"Send OTP error:\n{exc}")
                 return
 
@@ -160,7 +180,20 @@ class LoginScreen(Screen):
                     _popup("Success", "Login successful.")
 
                 Clock.schedule_once(after_login, 0)
+            except InvalidCredentialsError:
+                _popup("Error", "Wrong password.")
+                return
             except Exception as e:
+                if self._looks_like_wrong_password(e):
+                    _popup("Error", "Wrong password.")
+                    return
                 _popup("Error", f"Verify OTP error:\n{e}")
 
         Thread(target=work, daemon=True).start()
+
+    def _looks_like_wrong_password(self, exc: Exception) -> bool:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403):
+            return True
+        msg = str(exc).lower()
+        return "password" in msg and any(token in msg for token in ("wrong", "invalid", "incorrect"))

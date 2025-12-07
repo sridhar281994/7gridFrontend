@@ -17,7 +17,7 @@ from kivy.animation import Animation
 from kivy.factory import Factory
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ListProperty
 from kivy.core.window import Window
 
 API_URL = "https://spin-api-pba3.onrender.com"
@@ -71,9 +71,17 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
         if hasattr(self, "_scale"):
             self._scale.x = self._scale.y = float(self.scale_value)
 
-    def animate_spin(self, result: int):
+    def animate_spin(self, result: int, instant: bool = False):
         """Animate dice spin, then set the final face image."""
         self.stop_spin()
+
+        if instant:
+            img_path = os.path.join("assets", "dice", f"dice{result}.png")
+            if os.path.exists(img_path):
+                self._dice_image.source = img_path
+                self._dice_image.reload()
+            self.rotation_angle = 0
+            return
 
         spin_seq = (
             Animation(rotation_angle=360, d=0.28, t="out_cubic")  # clockwise
@@ -132,6 +140,7 @@ class DiceGameScreen(Screen):
     dice_result = StringProperty("")
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
+    chat_log = ListProperty([])
 
     player1_name = StringProperty("Player 1")
     player2_name = StringProperty("Player 2")
@@ -173,6 +182,7 @@ class DiceGameScreen(Screen):
         self._last_ping_time = 0
         self._ping_worker_active = False
         self._connection_recover_ev = None
+        self._chat_messages = []
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -312,6 +322,7 @@ class DiceGameScreen(Screen):
     def on_leave(self, *_):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
+        self._clear_chat_messages()
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -353,6 +364,7 @@ class DiceGameScreen(Screen):
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
+        self._clear_chat_messages()
         if hasattr(self, "_forfeited_players"):
             self._forfeited_players.clear()
         else:
@@ -552,9 +564,9 @@ class DiceGameScreen(Screen):
             self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
-                self.ids.dice_button.animate_spin(roll)
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
-            Clock.schedule_once(lambda dt: self._mark_roll_end(), 1.0)
+                self.ids.dice_button.animate_spin(roll, instant=True)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0)
+            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.2)
             return
 
         # ONLINE
@@ -803,6 +815,7 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._game_active = False
         self._winner_shown = False
+        self._clear_chat_messages()
         if self.manager:
             self.manager.current = "stage"
 
@@ -932,6 +945,30 @@ class DiceGameScreen(Screen):
         except Exception as e:
             self._debug(f"[TOAST][ERR] {e}")
 
+    # ---------- chat ----------
+    def send_chat_message(self, payload: str | None = None):
+        field = self.ids.get("chat_input")
+        text = payload if payload is not None else (field.text if field else "")
+        text = (text or "").strip()
+        if not text:
+            return
+        self._append_chat_message(text)
+        if field:
+            field.text = ""
+        scroll = self.ids.get("chat_scroll")
+        if scroll:
+            Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+
+    def _append_chat_message(self, text: str):
+        entry = f"You: {text}"
+        self._chat_messages.append(entry)
+        self._chat_messages = self._chat_messages[-12:]
+        self.chat_log = list(self._chat_messages)
+
+    def _clear_chat_messages(self):
+        self._chat_messages = []
+        self.chat_log = []
+
     def _animate_dice_and_apply_server(self, data, roll):
         if "dice_button" in self.ids:
             self.ids.dice_button.animate_spin(roll)
@@ -1032,17 +1069,11 @@ class DiceGameScreen(Screen):
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
-        if self._num_players == 3:
-            offsets = {
-                0: (-dp(16), dp(10)),
-                1: (dp(16), dp(10)),
-                2: (0, -dp(12)),
-            }
-        else:
-            offsets = {
-                0: (-dp(12), 0),
-                1: (dp(12), 0),
-            }
+        offsets = {
+            0: (0, 0),
+            1: (0, 0),
+            2: (0, 0),
+        }
         stack_x, stack_y = offsets.get(idx, (0, 0))
 
         if reverse:
@@ -1078,16 +1109,11 @@ class DiceGameScreen(Screen):
         size_px = max(dp(34), min(dp(56), h * 0.9))
         if self._num_players == 3:
             size_px = min(size_px, dp(40))
-            offsets = {
-                0: (-dp(16), dp(10)),
-                1: (dp(16), dp(10)),
-                2: (0, -dp(12)),
-            }
-        else:
-            offsets = {
-                0: (-dp(12), 0),
-                1: (dp(12), 0),
-            }
+        offsets = {
+            0: (0, 0),
+            1: (0, 0),
+            2: (0, 0),
+        }
         stack_x, stack_y = offsets.get(idx, (0, 0))
         coin.size = (size_px, size_px)
 
@@ -1695,20 +1721,20 @@ class DiceGameScreen(Screen):
 
             try:
                 if "dice_button" in self.ids and self.ids.dice_button:
-                    self.ids.dice_button.animate_spin(roll)
+                    self.ids.dice_button.animate_spin(roll, instant=True)
                 else:
                     self._debug("[BOT][WARN] dice_button not ready yet.")
             except Exception as e:
                 self._debug(f"[BOT][DICE][ERR] {e}")
 
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.8)
+            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0)
 
             def _clear_flag_and_check():
                 self._bot_rolling = False
                 if self._game_active:
                     self._debug(f"[BOT TURN] Player {current} finished roll.")
 
-            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 1.5)
+            Clock.schedule_once(lambda dt: _clear_flag_and_check(), 0.3)
 
         Clock.schedule_once(do_roll, delay)
 

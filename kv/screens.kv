@@ -111,7 +111,7 @@
 
             Label:
                 text: "Secure Login"
-                font_size: sp(26)
+                font_size: sp(26) * root.font_scale
                 color: 1, 1, 1, 1
                 halign: "center"
                 valign: "middle"
@@ -134,7 +134,7 @@
 
                 Label:
                     text: "Account Details"
-                    font_size: sp(17)
+                    font_size: sp(17) * root.font_scale
                     color: 1, 1, 1, 0.9
                     size_hint_y: None
                     height: self.texture_size[1] + dp(4)
@@ -143,7 +143,7 @@
                     id: phone_input
                     hint_text: "Email / Username / Phone"
                     multiline: False
-                    font_size: sp(18)
+                    font_size: max(sp(14), sp(18) * root.font_scale)
                     size_hint_y: None
                     height: dp(50)
                     background_color: (0.98, 0.95, 0.9, 0.95)
@@ -158,7 +158,7 @@
                         hint_text: "Account password"
                         password: login_password_toggle.state != "down"
                         multiline: False
-                        font_size: sp(18)
+                        font_size: max(sp(14), sp(18) * root.font_scale)
                         size_hint: 1, 1
                         background_color: (0.92, 0.96, 1, 0.95)
                         foreground_color: (0.09, 0.1, 0.14, 1)
@@ -180,7 +180,7 @@
                     text: "Request OTP"
                     size_hint_y: None
                     height: dp(44)
-                    font_size: sp(17)
+                    font_size: sp(17) * root.font_scale
                     background_normal: ""
                     background_color: (0.96, 0.58, 0.17, 1)
                     color: (0.1, 0.05, 0.02, 1)
@@ -202,7 +202,7 @@
 
                 Label:
                     text: "OTP Verification"
-                    font_size: sp(17)
+                    font_size: sp(17) * root.font_scale
                     color: 1, 1, 1, 0.9
                     size_hint_y: None
                     height: self.texture_size[1] + dp(4)
@@ -211,7 +211,7 @@
                     id: otp_input
                     hint_text: "Enter OTP (from email)"
                     multiline: False
-                    font_size: sp(18)
+                    font_size: max(sp(14), sp(18) * root.font_scale)
                     size_hint_y: None
                     height: dp(48)
                     background_color: (0.92, 0.98, 0.95, 0.95)
@@ -1296,6 +1296,84 @@
         FloatLayout:
             id: coin_layer
             size_hint: 1, 1
+
+        # Emoji chat panel
+        BoxLayout:
+            id: chat_panel
+            orientation: "vertical"
+            size_hint: None, None
+            width: min(root.width * 0.45, dp(420))
+            height: dp(190)
+            pos_hint: {"x": 0.05, "y": 0.18}
+            spacing: dp(6)
+            padding: dp(8)
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.45
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(14)]
+
+            ScrollView:
+                id: chat_scroll
+                bar_width: 0
+                do_scroll_x: False
+                size_hint_y: 0.55
+                Label:
+                    id: chat_history
+                    text: "\\n".join(root.chat_log) if root.chat_log else "Tap an emoji or send a quick note"
+                    size_hint_y: None
+                    text_size: self.width, None
+                    halign: "left"
+                    valign: "top"
+                    color: 1, 1, 1, 1
+                    font_size: sp(14)
+                    height: self.texture_size[1]
+
+            BoxLayout:
+                size_hint_y: None
+                height: dp(42)
+                spacing: dp(6)
+                TextInput:
+                    id: chat_input
+                    hint_text: "Type a message"
+                    multiline: False
+                    font_size: sp(14)
+                    background_color: (1, 1, 1, 0.8)
+                    foreground_color: (0.1, 0.1, 0.15, 1)
+                    padding: [dp(10), dp(8), dp(10), dp(8)]
+                Button:
+                    text: "Send"
+                    font_size: sp(14)
+                    size_hint_x: None
+                    width: dp(70)
+                    on_release: root.send_chat_message()
+
+            BoxLayout:
+                size_hint_y: None
+                height: dp(40)
+                spacing: dp(6)
+                Button:
+                    text: "😀"
+                    font_size: sp(18)
+                    on_release: root.send_chat_message("😀")
+                Button:
+                    text: "😎"
+                    font_size: sp(18)
+                    on_release: root.send_chat_message("😎")
+                Button:
+                    text: "😡"
+                    font_size: sp(18)
+                    on_release: root.send_chat_message("😡")
+                Button:
+                    text: "😢"
+                    font_size: sp(18)
+                    on_release: root.send_chat_message("😢")
+                Button:
+                    text: "🎉"
+                    font_size: sp(18)
+                    on_release: root.send_chat_message("🎉")
 
         # Exit button
         Button:
