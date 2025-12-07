@@ -344,27 +344,28 @@ class WalletActionsMixin:
 
     @staticmethod
     def _search_wallet_url(payload) -> str:
-        def scan(node):
+        def scan(node, require_wallet: bool) -> str:
             if isinstance(node, str):
                 val = node.strip()
-                if val.startswith("http") and "wallet" in val.lower():
-                    return val
+                if val.startswith("http"):
+                    if not require_wallet or "wallet" in val.lower():
+                        return val
                 return ""
             if isinstance(node, dict):
                 for value in node.values():
-                    result = scan(value)
+                    result = scan(value, require_wallet)
                     if result:
                         return result
                 return ""
             if isinstance(node, (list, tuple, set)):
                 for value in node:
-                    result = scan(value)
+                    result = scan(value, require_wallet)
                     if result:
                         return result
                 return ""
             return ""
 
-        return scan(payload) or ""
+        return scan(payload, True) or scan(payload, False) or ""
 
     # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):
