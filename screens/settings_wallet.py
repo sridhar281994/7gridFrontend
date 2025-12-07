@@ -244,6 +244,11 @@ class WalletActionsMixin:
             ("POST", f"{backend}/wallet/portal/create-link", payload),
             ("POST", f"{backend}/wallet/portal/link", payload),
             ("GET", f"{backend}/wallet/portal/link", None),
+            ("POST", f"{backend}/wallet/portal", payload),
+            ("GET", f"{backend}/wallet/portal", None),
+            ("POST", f"{backend}/wallet/link", payload),
+            ("GET", f"{backend}/wallet/link", None),
+            ("POST", f"{backend}/wallet/create-link", payload),
         ]
 
         def _parse_url(resp):
@@ -267,6 +272,7 @@ class WalletActionsMixin:
                     url,
                     headers=headers,
                     json=body if method != "GET" else None,
+                    allow_redirects=False,
                     timeout=10,
                     verify=False,
                 )
@@ -275,9 +281,11 @@ class WalletActionsMixin:
                 if resp.status_code >= 400:
                     continue
                 session_url = _parse_url(resp)
+                if not session_url:
+                    location = resp.headers.get("Location")
+                    if location and location.startswith("http"):
+                        session_url = location
                 if session_url:
-                    if storage:
-                        storage.set_wallet_url(session_url)
                     return session_url
             except Exception:
                 continue
@@ -294,7 +302,9 @@ class WalletActionsMixin:
         parsed = urlparse(base_url)
         query = dict(parse_qsl(parsed.query))
         if token:
-            query.setdefault("session_token", token)
+            for key in ("session_token", "token", "auth", "auth_token", "access_token"):
+                query.setdefault(key, token)
+        query.setdefault("source", "app")
         rebuilt = parsed._replace(query=urlencode(query))
         return urlunparse(rebuilt)
 
