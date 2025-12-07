@@ -93,21 +93,27 @@
                 size: self.size
                 source: "assets/login.png"
 
-        BoxLayout:
-            orientation: "vertical"
+        ScrollView:
             size_hint: None, None
             width: min(root.width * 0.9, dp(520))
-            height: min(root.height * 0.85, dp(620))
+            height: min(root.height * 0.9, dp(620))
             pos_hint: {"center_x": 0.5, "center_y": 0.55}
-            spacing: dp(12)
-            padding: dp(18)
-            canvas.before:
-                Color:
-                    rgba: 0, 0, 0, 0.5
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [20]
+            do_scroll_x: False
+            bar_width: 0
+
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: dp(12)
+                padding: dp(18)
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.5
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [20]
 
             Label:
                 text: "Secure Login"
