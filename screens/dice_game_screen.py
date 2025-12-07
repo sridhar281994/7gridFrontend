@@ -139,6 +139,7 @@ class DiceGameScreen(Screen):
 
     _current_player = NumericProperty(0)
     _game_active = BooleanProperty(False)
+    _num_players = NumericProperty(2)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -171,6 +172,7 @@ class DiceGameScreen(Screen):
         self._ping_failures = 0
         self._last_ping_time = 0
         self._ping_worker_active = False
+        self._connection_recover_ev = None
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -265,10 +267,17 @@ class DiceGameScreen(Screen):
                 while len(players) < 3:
                     players.append(None)
                 stake = storage.get_stake_amount()
-                self._num_players = storage.get_num_players() or 2
-                self.player1_name = players[0] or (storage.get_user().get("name") if storage.get_user() else "You")
+                stored_count = storage.get_num_players()
+                wants_three = stored_count == 3 or bool(players[2])
+                self._num_players = 3 if wants_three else 2
+                user = storage.get_user() or {}
+                fallback_name = user.get("name") or user.get("display_name") or "You"
+                self.player1_name = players[0] or fallback_name
                 self.player2_name = players[1] or "Bot"
-                self.player3_name = players[2] if self._num_players == 3 else ""
+                if self._num_players == 3:
+                    self.player3_name = players[2] or "Player 3"
+                else:
+                    self.player3_name = ""
                 if stake is not None:
                     self.stage_amount = int(stake)
                     self.stage_label = "Free Play" if stake == 0 else f"₹{stake} Bounty"
@@ -385,9 +394,15 @@ class DiceGameScreen(Screen):
 
     def set_stage_and_players(self, amount: int, p1: str, p2: str, p3: str = None, match_id=None):
         self.stage_amount = amount
+        stored_count = storage.get_num_players() if storage else None
+        wants_three = bool(p3) or stored_count == 3
+        self._num_players = 3 if wants_three else 2
         self.player1_name = p1 or "Player 1"
         self.player2_name = p2 or "Player 2"
-        self.player3_name = p3 or ""
+        if self._num_players == 3:
+            self.player3_name = p3 or "Player 3"
+        else:
+            self.player3_name = ""
         self.stage_label = "Free Play" if amount == 0 else f"₹{amount} Bounty"
         self.match_id = match_id
         self._online = bool(match_id)
@@ -940,7 +955,7 @@ class DiceGameScreen(Screen):
 
         ensure(0, "assets/coins/red.png")
         ensure(1, "assets/coins/yellow.png")
-        if self.player3_name:
+        if self._num_players == 3:
             ensure(2, "assets/coins/green.png")
 
         self._bring_coins_to_front()
@@ -1142,6 +1157,7 @@ class DiceGameScreen(Screen):
                 pass
             self._poll_ev = None
         self._stop_backend_heartbeat()
+        self._cancel_pending_recovery()
 
     def _start_backend_heartbeat(self):
         if not self._online:
@@ -1158,6 +1174,33 @@ class DiceGameScreen(Screen):
                 pass
             self._heartbeat_evt = None
         self._ping_worker_active = False
+        self._cancel_pending_recovery()
+
+    def _cancel_pending_recovery(self):
+        if self._connection_recover_ev:
+            try:
+                self._connection_recover_ev.cancel()
+            except Exception:
+                pass
+            self._connection_recover_ev = None
+
+    def _schedule_online_recovery(self):
+        if (
+            self._connection_recover_ev
+            or not self._online
+            or not self.match_id
+            or not self._game_active
+        ):
+            return
+        self._debug("[SYNC] Scheduling connection recovery after heartbeat failures.")
+        self._connection_recover_ev = Clock.schedule_once(self._perform_online_recovery, 0.6)
+
+    def _perform_online_recovery(self, *_):
+        self._connection_recover_ev = None
+        if not self._online or not self.match_id or not self._game_active:
+            return
+        self._debug("[SYNC] Restarting online sync after repeated heartbeat failures.")
+        self._start_online_sync()
 
     def _backend_ping_tick(self, *_):
         if self._ping_worker_active or not self._online:
@@ -1173,12 +1216,12 @@ class DiceGameScreen(Screen):
             endpoints = [f"{backend}/health", f"{backend}/matches/ping"]
             for endpoint in endpoints:
                 try:
-                    resp = requests.get(endpoint, headers=headers, timeout=3, verify=False)
+                    resp = requests.get(endpoint, headers=headers, timeout=5, verify=False)
                     if resp.status_code < 500:
                         success = True
                         break
                 except Exception as e:
-                    self._debug(f"[PING][ERR] {e}")
+                    self._debug(f"[PING][ERR] {endpoint}: {e}")
             Clock.schedule_once(lambda dt: self._handle_ping_result(success), 0)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1188,6 +1231,7 @@ class DiceGameScreen(Screen):
         if success:
             self._ping_failures = 0
             self._last_ping_time = time.time()
+            self._cancel_pending_recovery()
             badge = self.ids.get("connection_badge")
             if badge:
                 badge.text = "Connected"
@@ -1203,6 +1247,8 @@ class DiceGameScreen(Screen):
         if self._ping_failures >= 3:
             self._debug("[PING] consecutive failures → resync")
             self._sync_remote_turn("heartbeat-recover", trusted=True)
+        if self._ping_failures >= 5:
+            self._schedule_online_recovery()
 
     def _ws_worker(self):
         url = self._backend().replace("http", "ws") + f"/matches/ws/{self.match_id}"
