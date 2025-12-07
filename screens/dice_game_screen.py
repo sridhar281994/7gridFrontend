@@ -123,6 +123,9 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 Factory.register("PolygonDice", cls=PolygonDice)
 
 
+MAX_CHAT_LEN = 50
+
+
 class ChatBubble(Label):
     """Floating chat bubble that auto-sizes and paints its own rounded background."""
 
@@ -142,7 +145,7 @@ class ChatBubble(Label):
         self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
 
     def _sync_size(self, *_):
-        width = max(dp(90), self.texture_size[0] + dp(28))
+        width = min(dp(200), max(dp(90), self.texture_size[0] + dp(28)))
         height = self.texture_size[1] + dp(20)
         self.size = (width, height)
         self.text_size = (width - dp(22), None)
@@ -987,6 +990,8 @@ class DiceGameScreen(Screen):
         text = (text or "").strip()
         if not text:
             return
+        if len(text) > MAX_CHAT_LEN:
+            text = text[:MAX_CHAT_LEN]
         self._append_chat_message(text)
         self._show_chat_bubble(text)
         if field:
@@ -1002,6 +1007,15 @@ class DiceGameScreen(Screen):
     def _chat_overlay(self):
         return self.ids.get("ui_overlay") or self._root_float()
 
+    def _clamp_overlay_center(self, parent, target, size):
+        width = parent.width if parent.width else Window.width
+        height = parent.height if parent.height else Window.height
+        half_w = size[0] / 2.0
+        half_h = size[1] / 2.0
+        x = min(max(target[0], half_w + dp(4)), max(width - half_w - dp(4), half_w))
+        y = min(max(target[1], half_h + dp(4)), max(height - half_h - dp(4), half_h))
+        return x, y
+
     def _show_chat_bubble(self, message: str):
         parent = self._chat_overlay()
         if not parent:
@@ -1014,6 +1028,8 @@ class DiceGameScreen(Screen):
         bubble = self._chat_bubble
         bubble.opacity = 0
         bubble.text = message
+        bubble.texture_update()
+        bubble._sync_size()
 
         anchor = self.ids.get("p1_pic")
         if anchor:
@@ -1022,9 +1038,10 @@ class DiceGameScreen(Screen):
             ax, ay = parent.center
 
         target = (ax + dp(70), ay - dp(10))
-        bubble.center = (target[0], target[1] + dp(26))
+        safe_x, safe_y = self._clamp_overlay_center(parent, target, bubble.size)
+        bubble.center = (safe_x, safe_y + dp(26))
         Animation.cancel_all(bubble)
-        Animation(center=target, opacity=1, d=0.22, t="out_back").start(bubble)
+        Animation(center=(safe_x, safe_y), opacity=1, d=0.22, t="out_back").start(bubble)
 
         if self._chat_bubble_ev:
             try:
