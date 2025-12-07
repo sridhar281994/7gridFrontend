@@ -320,12 +320,21 @@ class WalletActionsMixin:
 
         try:
             parsed = urlparse(base_url)
-            query = dict(parse_qsl(parsed.query))
+            query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
             if token:
-                for key in ("session_token", "token", "auth", "auth_token", "access_token"):
-                    query.setdefault(key, token)
-            query.setdefault("source", "app")
-            rebuilt = parsed._replace(query=urlencode(query))
+                token_keys = (
+                    "session_token",
+                    "sessionToken",
+                    "token",
+                    "auth",
+                    "auth_token",
+                    "access_token",
+                    "wallet_token",
+                )
+                for key in token_keys:
+                    query_items[key] = token
+            query_items.setdefault("source", "app")
+            rebuilt = parsed._replace(query=urlencode(query_items))
             fallback_url = urlunparse(rebuilt)
             attempts.append(f"Fallback link={fallback_url}")
             return fallback_url
