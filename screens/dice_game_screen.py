@@ -10,7 +10,7 @@ from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.behaviors import ButtonBehavior
-from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale
+from kivy.graphics import PushMatrix, PopMatrix, Rotate, Scale, RoundedRectangle, Color
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.animation import Animation
@@ -123,6 +123,36 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 Factory.register("PolygonDice", cls=PolygonDice)
 
 
+class ChatBubble(Label):
+    """Floating chat bubble that auto-sizes and paints its own rounded background."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("markup", False)
+        kwargs.setdefault("color", (1, 1, 1, 1))
+        kwargs.setdefault("font_size", dp(13))
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.halign = "center"
+        self.valign = "middle"
+        self.padding = (dp(14), dp(10))
+        self.text_size = (None, None)
+        with self.canvas.before:
+            Color(0.08, 0.08, 0.14, 0.88)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(16)])
+        self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
+
+    def _sync_size(self, *_):
+        width = max(dp(90), self.texture_size[0] + dp(28))
+        height = self.texture_size[1] + dp(20)
+        self.size = (width, height)
+        self.text_size = (width - dp(22), None)
+
+    def _update_rect(self, *_):
+        if hasattr(self, "_rect") and self._rect is not None:
+            self._rect.pos = self.pos
+            self._rect.size = self.size
+
+
 # ------------------------
 # Dice Game Screen
 # ------------------------
@@ -184,6 +214,8 @@ class DiceGameScreen(Screen):
         self._ping_worker_active = False
         self._connection_recover_ev = None
         self._chat_messages = []
+        self._chat_bubble = None
+        self._chat_bubble_ev = None
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -325,6 +357,7 @@ class DiceGameScreen(Screen):
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
         self.chat_open = False
+        self._hide_chat_bubble(instant=True)
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -955,6 +988,7 @@ class DiceGameScreen(Screen):
         if not text:
             return
         self._append_chat_message(text)
+        self._show_chat_bubble(text)
         if field:
             field.text = ""
         scroll = self.ids.get("chat_scroll")
@@ -963,6 +997,64 @@ class DiceGameScreen(Screen):
 
     def toggle_chat_dropdown(self):
         self.chat_open = not self.chat_open
+
+    # ---------- chat bubble ----------
+    def _chat_overlay(self):
+        return self.ids.get("ui_overlay") or self._root_float()
+
+    def _show_chat_bubble(self, message: str):
+        parent = self._chat_overlay()
+        if not parent:
+            return
+
+        if not self._chat_bubble:
+            self._chat_bubble = ChatBubble()
+            parent.add_widget(self._chat_bubble)
+
+        bubble = self._chat_bubble
+        bubble.opacity = 0
+        bubble.text = message
+
+        anchor = self.ids.get("p1_pic")
+        if anchor:
+            ax, ay = self._map_center_to_parent(parent, anchor)
+        else:
+            ax, ay = parent.center
+
+        target = (ax + dp(70), ay - dp(10))
+        bubble.center = (target[0], target[1] + dp(26))
+        Animation.cancel_all(bubble)
+        Animation(center=target, opacity=1, d=0.22, t="out_back").start(bubble)
+
+        if self._chat_bubble_ev:
+            try:
+                self._chat_bubble_ev.cancel()
+            except Exception:
+                pass
+        self._chat_bubble_ev = Clock.schedule_once(lambda dt: self._hide_chat_bubble(), 4)
+
+    def _hide_chat_bubble(self, instant: bool = False):
+        bubble = getattr(self, "_chat_bubble", None)
+        if not bubble:
+            return
+        if self._chat_bubble_ev:
+            try:
+                self._chat_bubble_ev.cancel()
+            except Exception:
+                pass
+            self._chat_bubble_ev = None
+
+        def _finish(*_):
+            bubble.opacity = 0
+
+        if instant:
+            _finish()
+            return
+
+        Animation.cancel_all(bubble)
+        anim = Animation(opacity=0, d=0.3, t="in_quad")
+        anim.bind(on_complete=lambda *_: _finish())
+        anim.start(bubble)
 
     def _append_chat_message(self, text: str):
         entry = f"You: {text}"
