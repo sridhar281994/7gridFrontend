@@ -318,15 +318,20 @@ class WalletActionsMixin:
         if not base_url:
             base_url = "https://wallet.srtech.co.in"
 
-        parsed = urlparse(base_url)
-        query = dict(parse_qsl(parsed.query))
-        if token:
-            for key in ("session_token", "token", "auth", "auth_token", "access_token"):
-                query.setdefault(key, token)
-        query.setdefault("source", "app")
-        rebuilt = parsed._replace(query=urlencode(query))
-        attempts.append(f"Fallback link={urlunparse(rebuilt)}")
-        raise RuntimeError("; ".join(attempts))
+        try:
+            parsed = urlparse(base_url)
+            query = dict(parse_qsl(parsed.query))
+            if token:
+                for key in ("session_token", "token", "auth", "auth_token", "access_token"):
+                    query.setdefault(key, token)
+            query.setdefault("source", "app")
+            rebuilt = parsed._replace(query=urlencode(query))
+            fallback_url = urlunparse(rebuilt)
+            attempts.append(f"Fallback link={fallback_url}")
+            return fallback_url
+        except Exception as exc:
+            attempts.append(f"Fallback build fail: {exc}")
+            raise RuntimeError("; ".join(attempts))
 
     @staticmethod
     def _search_wallet_url(payload) -> str:
