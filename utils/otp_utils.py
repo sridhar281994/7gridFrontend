@@ -12,6 +12,9 @@ BACKEND_BASE = os.getenv("BACKEND_BASE", "https://spin-api-pba3.onrender.com").r
 VERIFY_SSL = os.getenv("OTP_VERIFY_SSL", "false").lower() == "true"
 PASSWORD_RESET_PATH = os.getenv("PASSWORD_RESET_PATH", "/auth/reset-password")
 
+# Cache whether the new login OTP endpoints exist in the backend.
+_LOGIN_OTP_ENDPOINT_AVAILABLE: Optional[bool] = None
+
 # Networking timeouts / retries
 TIMEOUT = float(os.getenv("OTP_HTTP_TIMEOUT", "40")) # per-request timeout
 RETRIES = int(os.getenv("OTP_HTTP_RETRIES", "2")) # how many times to retry on failure
@@ -81,6 +84,9 @@ def _request(
                 time.sleep(1.5) # short wait before retry
                 continue
             raise RuntimeError(f"Server cold start or too slow: {last_exc}")
+
+        except requests.HTTPError as err:
+            raise err
 
         except Exception as e:
             last_exc = e
@@ -246,19 +252,29 @@ def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
     payload = _login_identifier_payload(identifier)
     payload["password"] = password
 
+    def _legacy_send(err: Exception | None = None) -> Dict[str, Any]:
+        phone = payload.get("phone")
+        if phone:
+            return send_otp(phone)
+        raise LegacyOtpUnavailable(
+            "Secure OTP login requires using your registered phone number."
+        ) from err
+
+    global _LOGIN_OTP_ENDPOINT_AVAILABLE
+    if _LOGIN_OTP_ENDPOINT_AVAILABLE is False:
+        return _legacy_send()
+
     try:
-        return _request("POST", "/auth/login/request-otp", json=payload)
+        data = _request("POST", "/auth/login/request-otp", json=payload)
+        _LOGIN_OTP_ENDPOINT_AVAILABLE = True
+        return data
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
         if status in (401, 403):
             raise InvalidCredentialsError("Incorrect password or identifier.") from err
         if status == 404:
-            phone = payload.get("phone")
-            if phone:
-                return send_otp(phone)
-            raise LegacyOtpUnavailable(
-                "Secure OTP login requires using your registered phone number."
-            ) from err
+            _LOGIN_OTP_ENDPOINT_AVAILABLE = False
+            return _legacy_send(err)
         raise
 
 
@@ -272,14 +288,27 @@ def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str,
     payload["password"] = password
     payload["otp"] = str(otp).strip()
 
+    def _legacy_verify(err: Exception | None = None) -> Dict[str, Any]:
+        phone = payload.get("phone")
+        if phone:
+            return verify_otp(phone, otp)
+        raise LegacyOtpUnavailable(
+            "Secure OTP login requires using your registered phone number."
+        ) from err
+
+    global _LOGIN_OTP_ENDPOINT_AVAILABLE
+    if _LOGIN_OTP_ENDPOINT_AVAILABLE is False:
+        return _legacy_verify()
+
     try:
-        return _request("POST", "/auth/login/verify-otp", json=payload)
+        data = _request("POST", "/auth/login/verify-otp", json=payload)
+        _LOGIN_OTP_ENDPOINT_AVAILABLE = True
+        return data
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
         if status == 404:
-            phone = payload.get("phone")
-            if phone:
-                return verify_otp(phone, otp)
+            _LOGIN_OTP_ENDPOINT_AVAILABLE = False
+            return _legacy_verify(err)
         raise
     except Exception:
         raise
