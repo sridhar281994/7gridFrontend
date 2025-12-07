@@ -251,19 +251,14 @@ class WalletActionsMixin:
             ("POST", f"{backend}/wallet/create-link", payload),
         ]
 
+        attempts: list[str] = []
+
         def _parse_url(resp):
-            data = {}
             try:
                 data = resp.json()
             except Exception:
-                pass
-            if isinstance(data, str):
-                return data.strip()
-            for key in ("url", "link", "redirect", "short_url", "portal_url"):
-                val = data.get(key)
-                if isinstance(val, str) and val.strip():
-                    return val.strip()
-            return ""
+                data = resp.text or ""
+            return self._search_wallet_url(data)
 
         for method, url, body in candidates:
             try:
@@ -272,13 +267,16 @@ class WalletActionsMixin:
                     url,
                     headers=headers,
                     json=body if method != "GET" else None,
+                    params=body if method == "GET" else None,
                     allow_redirects=False,
                     timeout=10,
                     verify=False,
                 )
                 if resp.status_code == 404:
+                    attempts.append(f"{method} {url} → 404")
                     continue
                 if resp.status_code >= 400:
+                    attempts.append(f"{method} {url} → {resp.status_code}")
                     continue
                 session_url = _parse_url(resp)
                 if not session_url:
@@ -287,8 +285,29 @@ class WalletActionsMixin:
                         session_url = location
                 if session_url:
                     return session_url
-            except Exception:
+            except Exception as exc:
+                attempts.append(f"{method} {url}: {exc}")
                 continue
+
+        profile_paths = [
+            f"{backend}/wallet/portal-url",
+            f"{backend}/users/me/wallet-link",
+            f"{backend}/users/me/wallet",
+            f"{backend}/users/me/profile",
+            f"{backend}/users/me",
+        ]
+        for path in profile_paths:
+            try:
+                resp = requests.get(path, headers=headers, timeout=10, verify=False)
+                if resp.status_code != 200:
+                    attempts.append(f"GET {path} → {resp.status_code}")
+                    continue
+                data = resp.json()
+                session_url = self._search_wallet_url(data)
+                if session_url:
+                    return session_url
+            except Exception as exc:
+                attempts.append(f"GET {path}: {exc}")
 
         base_url = None
         if storage and hasattr(storage, "get_wallet_url"):
@@ -306,7 +325,32 @@ class WalletActionsMixin:
                 query.setdefault(key, token)
         query.setdefault("source", "app")
         rebuilt = parsed._replace(query=urlencode(query))
-        return urlunparse(rebuilt)
+        attempts.append(f"Fallback link={urlunparse(rebuilt)}")
+        raise RuntimeError("; ".join(attempts))
+
+    @staticmethod
+    def _search_wallet_url(payload) -> str:
+        def scan(node):
+            if isinstance(node, str):
+                val = node.strip()
+                if val.startswith("http") and "wallet" in val.lower():
+                    return val
+                return ""
+            if isinstance(node, dict):
+                for value in node.values():
+                    result = scan(value)
+                    if result:
+                        return result
+                return ""
+            if isinstance(node, (list, tuple, set)):
+                for value in node:
+                    result = scan(value)
+                    if result:
+                        return result
+                return ""
+            return ""
+
+        return scan(payload) or ""
 
     # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):
