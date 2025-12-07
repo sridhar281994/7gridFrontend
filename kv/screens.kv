@@ -1320,26 +1320,27 @@
             height: dp(240)
             pos_hint: {"x": 0.03, "y": 0.3}
 
-            ToggleButton:
+            Button:
                 id: chat_toggle
-                text: "💬"
+                text: "Hide Chat" if root.chat_open else "Chat"
                 size_hint: None, None
                 size: dp(90), dp(34)
                 pos_hint: {"x": 0, "y": 0.7}
                 font_size: sp(18)
                 background_normal: ""
                 background_down: ""
-                background_color: (0.05, 0.05, 0.05, 0.6)
+                background_color: (0.15, 0.15, 0.15, 0.9) if root.chat_open else (0.05, 0.05, 0.05, 0.6)
                 color: 1, 1, 1, 1
+                on_release: root.toggle_chat_dropdown()
 
             BoxLayout:
                 id: chat_dropdown
                 orientation: "vertical"
                 size_hint: None, None
                 width: dp(90)
-                height: dp(190) if chat_toggle.state == "down" else 0
-                opacity: 1 if chat_toggle.state == "down" else 0
-                disabled: chat_toggle.state != "down"
+                height: dp(190) if root.chat_open else 0
+                opacity: 1 if root.chat_open else 0
+                disabled: not root.chat_open
                 pos_hint: {"x": 0, "y": 0}
                 padding: dp(6)
                 spacing: dp(3)

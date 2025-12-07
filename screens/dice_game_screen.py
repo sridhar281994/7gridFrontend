@@ -141,6 +141,7 @@ class DiceGameScreen(Screen):
     stage_amount = NumericProperty(0)
     stage_label = StringProperty("Free Play")
     chat_log = ListProperty([])
+    chat_open = BooleanProperty(False)
 
     player1_name = StringProperty("Player 1")
     player2_name = StringProperty("Player 2")
@@ -323,6 +324,7 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
+        self.chat_open = False
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -958,6 +960,9 @@ class DiceGameScreen(Screen):
         scroll = self.ids.get("chat_scroll")
         if scroll:
             Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+
+    def toggle_chat_dropdown(self):
+        self.chat_open = not self.chat_open
 
     def _append_chat_message(self, text: str):
         entry = f"You: {text}"
