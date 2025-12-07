@@ -57,7 +57,10 @@ class LoginScreen(Screen):
 
     def _update_font_scale(self, *_):
         width = self.width or Window.width or 1
-        scale = max(0.8, min(1.2, width / 520.0))
+        height = self.height or Window.height or 1
+        width_ratio = width / 520.0
+        height_ratio = height / 720.0
+        scale = max(0.75, min(1.25, min(width_ratio, height_ratio)))
         self.font_scale = scale
 
     # ---------- navigation ----------
