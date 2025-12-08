@@ -332,7 +332,8 @@ class WalletActionsMixin:
                     "wallet_token",
                 )
                 existing_token_keys = [key for key in query_items if key in token_keys]
-                target_keys = existing_token_keys or ("session_token",)
+                default_keys = ("session_token", "wallet_token", "token")
+                target_keys = existing_token_keys or default_keys
                 for key in target_keys:
                     query_items[key] = token
             query_items.setdefault("source", "app")
