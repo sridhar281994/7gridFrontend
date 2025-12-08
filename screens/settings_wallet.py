@@ -318,39 +318,54 @@ class WalletActionsMixin:
         if not base_url:
             base_url = "https://wallet.srtech.co.in"
 
-        parsed = urlparse(base_url)
-        query = dict(parse_qsl(parsed.query))
-        if token:
-            for key in ("session_token", "token", "auth", "auth_token", "access_token"):
-                query.setdefault(key, token)
-        query.setdefault("source", "app")
-        rebuilt = parsed._replace(query=urlencode(query))
-        attempts.append(f"Fallback link={urlunparse(rebuilt)}")
-        raise RuntimeError("; ".join(attempts))
+        try:
+            parsed = urlparse(base_url)
+            query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if token:
+                token_keys = (
+                    "session_token",
+                    "sessionToken",
+                    "token",
+                    "auth",
+                    "auth_token",
+                    "access_token",
+                    "wallet_token",
+                )
+                for key in token_keys:
+                    query_items[key] = token
+            query_items.setdefault("source", "app")
+            rebuilt = parsed._replace(query=urlencode(query_items))
+            fallback_url = urlunparse(rebuilt)
+            attempts.append(f"Fallback link={fallback_url}")
+            return fallback_url
+        except Exception as exc:
+            attempts.append(f"Fallback build fail: {exc}")
+            raise RuntimeError("; ".join(attempts))
 
     @staticmethod
     def _search_wallet_url(payload) -> str:
-        def scan(node):
+        def scan(node, require_wallet: bool) -> str:
             if isinstance(node, str):
                 val = node.strip()
-                if val.startswith("http") and "wallet" in val.lower():
-                    return val
+                if val.startswith("http"):
+                    if not require_wallet or "wallet" in val.lower():
+                        return val
                 return ""
             if isinstance(node, dict):
                 for value in node.values():
-                    result = scan(value)
+                    result = scan(value, require_wallet)
                     if result:
                         return result
                 return ""
             if isinstance(node, (list, tuple, set)):
                 for value in node:
-                    result = scan(value)
+                    result = scan(value, require_wallet)
                     if result:
                         return result
                 return ""
             return ""
 
-        return scan(payload) or ""
+        return scan(payload, True) or scan(payload, False) or ""
 
     # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):
