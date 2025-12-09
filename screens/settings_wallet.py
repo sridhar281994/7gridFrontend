@@ -331,11 +331,11 @@ class WalletActionsMixin:
                     "access_token",
                     "wallet_token",
                 )
-                existing_token_keys = [key for key in query_items if key in token_keys]
-                default_keys = ("session_token", "wallet_token", "token")
-                target_keys = existing_token_keys or default_keys
-                for key in target_keys:
-                    query_items[key] = token
+                existing_key = next((key for key in token_keys if key in query_items), "session_token")
+                for key in token_keys:
+                    if key != existing_key:
+                        query_items.pop(key, None)
+                query_items[existing_key] = token
             query_items.setdefault("source", "app")
             rebuilt = parsed._replace(query=urlencode(query_items))
             fallback_url = urlunparse(rebuilt)

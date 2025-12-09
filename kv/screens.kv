@@ -1226,10 +1226,10 @@
                 GridLayout:
                     id: board
                     cols: 1
-                    rows: 8
+                    rows: 9
                     size_hint_y: 1
                     row_force_default: True
-                    on_size: self.row_default_height = self.height / 8
+                    on_size: self.row_default_height = self.height / 9
 
                     Label:
                         id: box_0
@@ -1303,8 +1303,18 @@
                                 pos: self.pos
                                 size: self.size
 
-                    RelativeLayout:
+                    Label:
                         id: box_7
+                        text: ""
+                        canvas.before:
+                            Color:
+                                rgba: 0, 0, 0, 0.1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+
+                    RelativeLayout:
+                        id: box_8
                         Image:
                             source: "assets/final.png"
 

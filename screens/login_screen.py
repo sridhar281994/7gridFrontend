@@ -1,6 +1,7 @@
 from threading import Thread
 from typing import Optional, Dict, Any
 
+import requests
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.properties import NumericProperty
@@ -101,6 +102,54 @@ class LoginScreen(Screen):
             return True
         return len(identifier) >= 3
 
+    def _build_login_payload(self, identifier: str, password: str) -> Dict[str, str]:
+        ident = (identifier or "").strip()
+        payload: Dict[str, str] = {"password": password}
+        if ident:
+            payload["identifier"] = ident
+            if "@" in ident:
+                payload["email"] = ident
+            elif ident.isdigit():
+                payload["phone"] = ident
+            else:
+                payload["username"] = ident
+        return payload
+
+    def _ensure_password_valid(self, identifier: str, password: str) -> bool:
+        backend = storage.get_backend_url() if storage else ""
+        if not backend:
+            return True
+
+        payload = self._build_login_payload(identifier, password)
+        base = backend.rstrip("/")
+        endpoints = (
+            "/auth/login/password-check",
+            "/auth/login/check-password",
+        )
+        last_error: Optional[str] = None
+
+        for path in endpoints:
+            url = f"{base}{path}"
+            try:
+                resp = requests.post(url, json=payload, timeout=8, verify=False)
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+            if resp.status_code in (200, 204):
+                return True
+            if resp.status_code in (401, 403):
+                raise InvalidCredentialsError("Wrong password.")
+            if resp.status_code == 404:
+                continue
+            if 400 <= resp.status_code < 500:
+                raise InvalidCredentialsError(resp.text or "Wrong password.")
+            return True
+
+        if last_error:
+            raise RuntimeError(last_error)
+        return True
+
     def send_otp_to_user(self) -> None:
         identifier = self._read_identifier()
         password = self._read_password()
@@ -113,6 +162,15 @@ class LoginScreen(Screen):
             return
 
         def work():
+            try:
+                self._ensure_password_valid(identifier, password)
+            except InvalidCredentialsError:
+                _popup("Error", "Wrong password.")
+                return
+            except Exception as exc:
+                _popup("Error", f"Unable to validate password: {exc}")
+                return
+
             try:
                 data: Dict[str, Any] = request_login_otp(identifier, password)
                 ok = bool(data.get("ok", True))

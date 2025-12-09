@@ -125,6 +125,15 @@ Factory.register("PolygonDice", cls=PolygonDice)
 
 MAX_CHAT_LEN = 50
 
+COIN_TEXTURES = (
+    "assets/coins/red.png",
+    "assets/coins/yellow.png",
+    "assets/coins/green.png",
+)
+
+FINAL_BOX_INDEX = 8
+COINS_TO_WIN = 2
+
 
 class ChatBubble(Label):
     """Floating chat bubble that auto-sizes and paints its own rounded background."""
@@ -186,9 +195,11 @@ class DiceGameScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._positions = [0, 0, 0]
+        self._positions = [-1, -1, -1]
         self._coins = [None, None, None]
         self._spawned_on_board = [False, False, False]
+        self._coins_finished = [0, 0, 0]
+        self._finished_markers = [[], [], []]
         self._winner_shown = False
         self._num_players = 2
 
@@ -246,6 +257,82 @@ class DiceGameScreen(Screen):
         for c in self._coins:
             if c:
                 self._add_on_top(c)
+
+    def _coin_texture(self, idx: int) -> str:
+        return COIN_TEXTURES[idx % len(COIN_TEXTURES)]
+
+    def _coin_portrait_offset(self, idx: int) -> tuple[float, float]:
+        if self._num_players == 3:
+            mapping = {0: (-dp(8), 0), 1: (dp(8), 0), 2: (0, dp(4))}
+            return mapping.get(idx, (0, 0))
+        return {0: (-dp(6), 0), 1: (dp(6), 0)}.get(idx, (0, 0))
+
+    def _position_coin_near_portrait(self, idx: int):
+        coin = self._coins[idx] if idx < len(self._coins) else None
+        pic = self.ids.get(f"p{idx + 1}_pic")
+        if not coin or not pic:
+            return
+        layer = self._root_float()
+        cx, cy = self._map_center_to_parent(layer, pic)
+        base = dp(24) if self._num_players == 2 else dp(21)
+        coin.size = (base, base)
+        off_x, off_y = self._coin_portrait_offset(idx)
+        target = (cx + off_x, cy - dp(50) + off_y)
+        safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
+        coin.center = (safe_x, safe_y)
+        coin.opacity = 1
+
+    def _move_coin_home(self, idx: int):
+        if idx >= len(self._spawned_on_board):
+            return
+        if self._spawned_on_board[idx]:
+            return
+        self._position_coin_near_portrait(idx)
+
+    def _clear_finished_markers(self):
+        if not hasattr(self, "_finished_markers") or not self._finished_markers:
+            self._finished_markers = [[], [], []]
+            return
+        for bucket in self._finished_markers:
+            for marker in bucket:
+                try:
+                    if marker and marker.parent:
+                        marker.parent.remove_widget(marker)
+                except Exception:
+                    pass
+        self._finished_markers = [[], [], []]
+
+    def _add_finished_marker(self, player_idx: int):
+        if player_idx >= len(self._coins_finished):
+            return
+        layer = self._root_float()
+        box = self.ids.get(f"box_{FINAL_BOX_INDEX}")
+        if not layer or not box:
+            return
+        marker = Image(source=self._coin_texture(player_idx), size_hint=(None, None), opacity=1)
+        marker.size = (dp(30), dp(30))
+        bx, by = self._map_center_to_parent(layer, box)
+        slot = len(self._finished_markers[player_idx]) if self._finished_markers else 0
+        offsets = {
+            0: (-dp(14), dp(10)),
+            1: (dp(14), dp(10)),
+            2: (0, -dp(10)),
+        }
+        off_x, off_y = offsets.get(slot, (0, 0))
+        target = (bx + off_x, by + off_y)
+        safe_x, safe_y = self._clamp_to_bounds(target, marker.size)
+        marker.center = (safe_x, safe_y)
+        layer.add_widget(marker)
+        if len(self._finished_markers) <= player_idx:
+            self._finished_markers.extend([[] for _ in range(player_idx - len(self._finished_markers) + 1)])
+        self._finished_markers[player_idx].append(marker)
+
+    def _ready_next_coin(self, player_idx: int):
+        if player_idx >= len(self._positions):
+            return
+        self._spawned_on_board[player_idx] = False
+        self._positions[player_idx] = -1
+        self._move_coin_home(player_idx)
 
     def _map_center_to_parent(self, target_parent, widget):
         try:
@@ -359,6 +446,8 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
+        self._clear_finished_markers()
+        self._coins_finished = [0, 0, 0]
         self.chat_open = False
         self._hide_chat_bubble(instant=True)
 
@@ -397,8 +486,10 @@ class DiceGameScreen(Screen):
     # ---------- state ----------
     def _reset_game_state(self):
         """Reset local positions and flags; used mainly for offline/bot games."""
-        self._positions = [0, 0, 0]
+        self._positions = [-1, -1, -1]
         self._spawned_on_board = [False, False, False]
+        self._coins_finished = [0, 0, 0]
+        self._clear_finished_markers()
         self.dice_result = ""
         self._winner_shown = False
         self._game_active = True
@@ -720,22 +811,27 @@ class DiceGameScreen(Screen):
     # ---------- offline roll core ----------
     def _apply_roll(self, roll: int):
         """
-        Offline dice roll logic — mirrors backend rules:
-          - Spawn: only when rolling 1 (if not spawned yet).
+        Offline dice roll logic:
+          - Spawn: roll 1 to bring the next coin onto box 0.
           - Box 3: danger → coin returns to box 0.
-          - Overshoot >7: stay where you are.
-          - Exact 7: win.
-          - Capture: if you land on opponent box, opponent goes back to box 0.
-          - Turn order: ALWAYS p0 → p1 → p2 → p0 → ... (no extra turns).
+          - Overshoot beyond FINAL_BOX_INDEX: stay where you are.
+          - Each player must lock COINS_TO_WIN coins at box FINAL_BOX_INDEX.
+          - Capture: landing on an opponent sends them back to box 0.
+          - Turn order strictly cycles p0 → p1 → p2 → ...
         """
         if self._online:
             self._debug("[SKIP] Online mode active — backend handles dice roll.")
             return
 
         p = self._current_player
-        old = self._positions[p]
-        new_pos = old + roll
-        BOARD_MAX = 7
+        if self._coins_finished[p] >= COINS_TO_WIN:
+            self._debug(f"[OFFLINE] Player {p} already locked all coins.")
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.4)
+            return
+
+        old = self._positions[p] if self._spawned_on_board[p] else -1
+        new_pos = old + roll if self._spawned_on_board[p] else -1
+        BOARD_MAX = FINAL_BOX_INDEX
         DANGER_BOX = 3
 
         self._debug(f"[OFFLINE] Player {p} rolled {roll} (from {old})")
@@ -772,10 +868,23 @@ class DiceGameScreen(Screen):
         if new_pos == BOARD_MAX:
             self._positions[p] = BOARD_MAX
             self._move_coin_to_box(p, BOARD_MAX)
-            self._declare_winner(p)
+            self._coins_finished[p] += 1
+            self._add_finished_marker(p)
+            progress = self._coins_finished[p]
+            self._debug(f"[PROGRESS] Player {p} locked coin {progress}/{COINS_TO_WIN}")
+
+            if self._coins_finished[p] >= COINS_TO_WIN:
+                self._declare_winner(p)
+                return
+
+            def prep_next(*_):
+                self._ready_next_coin(p)
+                self._end_turn_and_highlight()
+
+            Clock.schedule_once(prep_next, 0.9)
             return
 
-        # --- Rule 4: Overshoot (>7) → stay on current box ---
+        # --- Rule 4: Overshoot (>FINAL_BOX) → stay on current box ---
         if new_pos > BOARD_MAX:
             self._debug(f"[OVERSHOOT] Player {p} rolled {roll} → stays at {old}")
             self._positions[p] = old
@@ -1104,44 +1213,19 @@ class DiceGameScreen(Screen):
                     pass
                 layer.add_widget(self._coins[idx])
 
-        ensure(0, "assets/coins/red.png")
-        ensure(1, "assets/coins/yellow.png")
+        ensure(0, self._coin_texture(0))
+        ensure(1, self._coin_texture(1))
         if self._num_players == 3:
-            ensure(2, "assets/coins/green.png")
+            ensure(2, self._coin_texture(2))
 
         self._bring_coins_to_front()
 
     def _place_coins_near_portraits(self):
         self._ensure_coin_widgets()
-        layer = self._root_float()
-
-        def portrait_offset(idx):
-            if self._num_players == 3:
-                mapping = {
-                    0: (-dp(8), 0),
-                    1: (dp(8), 0),
-                    2: (0, dp(4)),
-                }
-                return mapping.get(idx, (0, 0))
-            return {0: (-dp(6), 0), 1: (dp(6), 0)}.get(idx, (0, 0))
-
-        def place(pic_id, coin_img, idx):
-            pic = self.ids.get(pic_id)
-            if not (coin_img and pic):
-                return
-            cx, cy = self._map_center_to_parent(layer, pic)
-            base = dp(24) if self._num_players == 2 else dp(21)
-            coin_img.size = (base, base)
-            off_x, off_y = portrait_offset(idx)
-            target = (cx + off_x, cy - dp(50) + off_y)
-            safe_x, safe_y = self._clamp_to_bounds(target, coin_img.size)
-            coin_img.center = (safe_x, safe_y)
-            coin_img.opacity = 1
-
-        place("p1_pic", self._coins[0], 0)
-        place("p2_pic", self._coins[1], 1)
-        if self._num_players == 3:
-            place("p3_pic", self._coins[2], 2)
+        for idx in range(self._num_players):
+            if idx < len(self._spawned_on_board) and self._spawned_on_board[idx]:
+                continue
+            self._position_coin_near_portrait(idx)
 
     def _clamp_to_bounds(self, pos, size):
         layer = self._root_float()
@@ -1719,90 +1803,13 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
         if self._online:
-            if self._current_player == self._my_index:
-                self._debug(f"[TIMER] 10s auto-roll for player {self._current_player} (you)")
-
-                def _verify_and_roll(dt):
-                    try:
-                        resp = requests.get(
-                            f"{self._backend()}/matches/check",
-                            headers={"Authorization": f"Bearer {self._token()}"},
-                            params={"match_id": self.match_id},
-                            timeout=4,
-                            verify=False,
-                        )
-                        if resp.status_code == 200:
-                            srv_turn = int(resp.json().get("turn", -1))
-                            if srv_turn == self._my_index:
-                                self._debug("[TIMER] Backend confirms your turn → auto-roll")
-                                self._auto_roll_real_online()
-                            else:
-                                self._debug(
-                                    f"[TIMER] Skipped auto-roll (srv_turn={srv_turn}, me={self._my_index})"
-                                )
-                    except Exception as e:
-                        self._debug(f"[TIMER][ERR] {e}")
-
-                self._turn_timer = Clock.schedule_once(_verify_and_roll, 10)
+            self._debug("[TIMER] Online auto-roll disabled — awaiting manual input.")
             return
 
         # offline
         if self._current_player == 0:
             self._debug("[TIMER] 10s offline auto-roll for player 0")
             self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
-
-    def _auto_roll_real_online(self):
-        if not self._online or not self._game_active:
-            return
-
-        if self._my_index is None:
-            self._debug("[AUTO-ROLL] Aborted — player index unknown.")
-            self._sync_remote_turn("auto-no-index")
-            return
-
-        if getattr(self, "_roll_inflight", False):
-            self._debug("[AUTO-ROLL] Aborted — roll already in flight.")
-            return
-
-        forfeited = getattr(self, "_forfeited_players", set())
-        if self._my_index in forfeited:
-            self._debug(f"[AUTO-ROLL] Skip (forfeited player {self._my_index})")
-            return
-
-        try:
-            resp = requests.get(
-                f"{self._backend()}/matches/check",
-                headers={"Authorization": f"Bearer {self._token()}"},
-                params={"match_id": self.match_id},
-                timeout=4,
-                verify=False,
-            )
-
-            if resp.status_code == 400 or ("Match not active" in resp.text):
-                self._debug("[AUTO-ROLL] Backend says match inactive — stopping.")
-                self._game_active = False
-                self._cancel_turn_timer()
-                return
-
-            if resp.status_code != 200:
-                self._debug(f"[AUTO-ROLL] check failed {resp.status_code}")
-                return
-
-            data = resp.json()
-            self._maybe_update_my_index_from_payload(data, trusted=True)
-            srv_turn = int(data.get("turn", -1))
-            if srv_turn != self._my_index or srv_turn in forfeited:
-                self._debug(
-                    f"[AUTO-ROLL] skip, srv_turn={srv_turn}, me={self._my_index}, forfeited={forfeited}"
-                )
-                return
-        except Exception as e:
-            self._debug(f"[AUTO-ROLL][ERR] {e}")
-            return
-
-        self._debug(f"[AUTO-ROLL] confirmed auto-roll for player {self._my_index}")
-        self._auto_from_timer = True
-        Clock.schedule_once(lambda dt: self.roll_dice(), 0.1)
 
     def _cancel_turn_timer(self):
         if hasattr(self, "_turn_timer") and self._turn_timer:
@@ -1871,11 +1878,7 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
             if self._online:
-                if self._current_player == self._my_index:
-                    self._debug("[TIMER] 10s auto-roll timer (you)")
-                    self._turn_timer = Clock.schedule_once(
-                        lambda dt: self._auto_roll_real_online(), 10
-                    )
+                self._debug("[TURN] Online mode idle until player rolls manually.")
                 return
 
             if self._current_player == 0:
