@@ -260,6 +260,7 @@ class WalletActionsMixin:
                 data = resp.text or ""
             return self._search_wallet_url(data)
 
+        portal_unavailable = False
         for method, url, body in candidates:
             try:
                 resp = requests.request(
@@ -274,7 +275,8 @@ class WalletActionsMixin:
                 )
                 if resp.status_code == 404:
                     attempts.append(f"{method} {url} → 404")
-                    continue
+                    portal_unavailable = True
+                    break
                 if resp.status_code >= 400:
                     attempts.append(f"{method} {url} → {resp.status_code}")
                     continue
@@ -289,25 +291,28 @@ class WalletActionsMixin:
                 attempts.append(f"{method} {url}: {exc}")
                 continue
 
-        profile_paths = [
-            f"{backend}/wallet/portal-url",
-            f"{backend}/users/me/wallet-link",
-            f"{backend}/users/me/wallet",
-            f"{backend}/users/me/profile",
-            f"{backend}/users/me",
-        ]
-        for path in profile_paths:
-            try:
-                resp = requests.get(path, headers=headers, timeout=10, verify=False)
-                if resp.status_code != 200:
-                    attempts.append(f"GET {path} → {resp.status_code}")
-                    continue
-                data = resp.json()
-                session_url = self._search_wallet_url(data)
-                if session_url:
-                    return session_url
-            except Exception as exc:
-                attempts.append(f"GET {path}: {exc}")
+        if not portal_unavailable:
+            profile_paths = [
+                f"{backend}/wallet/portal-url",
+                f"{backend}/users/me/wallet-link",
+                f"{backend}/users/me/wallet",
+                f"{backend}/users/me/profile",
+                f"{backend}/users/me",
+            ]
+            for path in profile_paths:
+                try:
+                    resp = requests.get(path, headers=headers, timeout=10, verify=False)
+                    if resp.status_code != 200:
+                        attempts.append(f"GET {path} → {resp.status_code}")
+                        continue
+                    data = resp.json()
+                    session_url = self._search_wallet_url(data)
+                    if session_url:
+                        return session_url
+                except Exception as exc:
+                    attempts.append(f"GET {path}: {exc}")
+        else:
+            attempts.append("Portal endpoints missing — falling back immediately.")
 
         base_url = None
         if storage and hasattr(storage, "get_wallet_url"):
