@@ -38,7 +38,6 @@ class WalletActionsMixin:
     def _run_async(worker):
         threading.Thread(target=worker, daemon=True).start()
 
-    # ------------------ Recharge ------------------
     def recharge(self):
         box = BoxLayout(orientation="vertical", spacing=5, padding=5)
         amount_input = TextInput(hint_text="Enter recharge amount", multiline=False, input_filter="int")
@@ -90,7 +89,6 @@ class WalletActionsMixin:
         submit_btn.bind(on_release=submit)
         popup.open()
 
-    # ------------------ Withdraw ------------------
     def withdraw(self):
         token, backend = self._require_auth()
         if not (token and backend):
@@ -143,7 +141,6 @@ class WalletActionsMixin:
         submit_btn.bind(on_release=submit)
         popup.open()
 
-    # ------------------ Wallet History ------------------
     def show_wallet_history(self):
         token, backend = self._require_auth()
         if not (token and backend):
@@ -204,7 +201,6 @@ class WalletActionsMixin:
 
         self._run_async(worker)
 
-    # ------------------ Wallet Portal ------------------
     def open_wallet_portal(self):
         token, backend = self._require_auth()
         if not (token and backend):
@@ -235,79 +231,26 @@ class WalletActionsMixin:
 
         self._run_async(worker)
 
+    def _request_wallet_link_token(self, token: str, backend: str) -> str:
+        """Ask backend for a bridge token that the portal can redeem."""
+        resp = requests.post(
+            f"{backend}/auth/wallet-link",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"channel": "app"},
+            timeout=10,
+            verify=False,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(resp.text or "Wallet link request failed")
+        data = resp.json()
+        link_token = data.get("token")
+        if not link_token:
+            raise RuntimeError("Wallet link token missing in response")
+        return link_token
+
     def _fetch_wallet_portal_link(self, token: str, backend: str) -> str:
-        """Create a short-lived wallet session link from backend; fallback to tokenized base URL."""
-
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        payload = {"source": "app"}
-        candidates = [
-            ("POST", f"{backend}/wallet/portal/create-link", payload),
-            ("POST", f"{backend}/wallet/portal/link", payload),
-            ("GET", f"{backend}/wallet/portal/link", None),
-            ("POST", f"{backend}/wallet/portal", payload),
-            ("GET", f"{backend}/wallet/portal", None),
-            ("POST", f"{backend}/wallet/link", payload),
-            ("GET", f"{backend}/wallet/link", None),
-            ("POST", f"{backend}/wallet/create-link", payload),
-        ]
-
-        attempts: list[str] = []
-
-        def _parse_url(resp):
-            try:
-                data = resp.json()
-            except Exception:
-                data = resp.text or ""
-            return self._search_wallet_url(data)
-
-        for method, url, body in candidates:
-            try:
-                resp = requests.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=body if method != "GET" else None,
-                    params=body if method == "GET" else None,
-                    allow_redirects=False,
-                    timeout=10,
-                    verify=False,
-                )
-                if resp.status_code == 404:
-                    attempts.append(f"{method} {url} → 404")
-                    continue
-                if resp.status_code >= 400:
-                    attempts.append(f"{method} {url} → {resp.status_code}")
-                    continue
-                session_url = _parse_url(resp)
-                if not session_url:
-                    location = resp.headers.get("Location")
-                    if location and location.startswith("http"):
-                        session_url = location
-                if session_url:
-                    return session_url
-            except Exception as exc:
-                attempts.append(f"{method} {url}: {exc}")
-                continue
-
-        profile_paths = [
-            f"{backend}/wallet/portal-url",
-            f"{backend}/users/me/wallet-link",
-            f"{backend}/users/me/wallet",
-            f"{backend}/users/me/profile",
-            f"{backend}/users/me",
-        ]
-        for path in profile_paths:
-            try:
-                resp = requests.get(path, headers=headers, timeout=10, verify=False)
-                if resp.status_code != 200:
-                    attempts.append(f"GET {path} → {resp.status_code}")
-                    continue
-                data = resp.json()
-                session_url = self._search_wallet_url(data)
-                if session_url:
-                    return session_url
-            except Exception as exc:
-                attempts.append(f"GET {path}: {exc}")
+        """Always build the wallet URL around the short-lived bridge token."""
+        link_token = self._request_wallet_link_token(token, backend)
 
         base_url = None
         if storage and hasattr(storage, "get_wallet_url"):
@@ -318,32 +261,12 @@ class WalletActionsMixin:
         if not base_url:
             base_url = "https://wallet.srtech.co.in"
 
-        try:
-            parsed = urlparse(base_url)
-            query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
-            if token:
-                token_keys = (
-                    "session_token",
-                    "sessionToken",
-                    "token",
-                    "auth",
-                    "auth_token",
-                    "access_token",
-                    "wallet_token",
-                )
-                existing_token_keys = [key for key in query_items if key in token_keys]
-                default_keys = ("session_token", "wallet_token", "token")
-                target_keys = existing_token_keys or default_keys
-                for key in target_keys:
-                    query_items[key] = token
-            query_items.setdefault("source", "app")
-            rebuilt = parsed._replace(query=urlencode(query_items))
-            fallback_url = urlunparse(rebuilt)
-            attempts.append(f"Fallback link={fallback_url}")
-            return fallback_url
-        except Exception as exc:
-            attempts.append(f"Fallback build fail: {exc}")
-            raise RuntimeError("; ".join(attempts))
+        parsed = urlparse(base_url)
+        query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query_items["token"] = link_token
+        query_items.setdefault("source", "app")
+        rebuilt = parsed._replace(query=urlencode(query_items))
+        return urlunparse(rebuilt)
 
     @staticmethod
     def _search_wallet_url(payload) -> str:
@@ -370,7 +293,6 @@ class WalletActionsMixin:
 
         return scan(payload, True) or scan(payload, False) or ""
 
-    # ------------------ Wallet Refresh ------------------
     def refresh_wallet_balance(self):
         token, backend = self._auth_pair()
 
