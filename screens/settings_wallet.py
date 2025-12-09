@@ -323,20 +323,20 @@ class WalletActionsMixin:
             query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
             if token:
                 token_keys = (
+                    "wallet_token",
                     "session_token",
                     "sessionToken",
                     "token",
                     "auth",
                     "auth_token",
                     "access_token",
-                    "wallet_token",
                 )
-                existing_key = next((key for key in token_keys if key in query_items), "session_token")
-                for key in token_keys:
-                    if key != existing_key:
-                        query_items.pop(key, None)
-                query_items[existing_key] = token
+                existing_keys = [key for key in token_keys if key in query_items]
+                target_keys = existing_keys or ("wallet_token", "session_token")
+                for key in target_keys:
+                    query_items[key] = token
             query_items.setdefault("source", "app")
+            query_items.setdefault("channel", "app")
             rebuilt = parsed._replace(query=urlencode(query_items))
             fallback_url = urlunparse(rebuilt)
             attempts.append(f"Fallback link={fallback_url}")

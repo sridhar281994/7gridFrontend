@@ -289,6 +289,12 @@ class DiceGameScreen(Screen):
             return
         self._position_coin_near_portrait(idx)
 
+    def _refresh_coin_idle_positions(self):
+        limit = min(self._num_players, len(self._spawned_on_board))
+        for idx in range(limit):
+            if not self._spawned_on_board[idx]:
+                self._position_coin_near_portrait(idx)
+
     def _clear_finished_markers(self):
         if not hasattr(self, "_finished_markers") or not self._finished_markers:
             self._finished_markers = [[], [], []]
@@ -403,6 +409,8 @@ class DiceGameScreen(Screen):
                 stored_count = storage.get_num_players()
                 wants_three = stored_count == 3 or bool(players[2])
                 self._num_players = 3 if wants_three else 2
+                if self._num_players < 2:
+                    self._num_players = 2
                 user = storage.get_user() or {}
                 fallback_name = user.get("name") or user.get("display_name") or "You"
                 self.player1_name = players[0] or fallback_name
@@ -514,6 +522,8 @@ class DiceGameScreen(Screen):
             if idx < len(self._coins) and self._coins[idx]:
                 self._coins[idx].opacity = 1
 
+        self._refresh_coin_idle_positions()
+
         forfeited = getattr(self, "_forfeited_players", set())
         active_players = [i for i in range(self._num_players) if i not in forfeited]
         if not active_players:
@@ -538,6 +548,8 @@ class DiceGameScreen(Screen):
         stored_count = storage.get_num_players() if storage else None
         wants_three = bool(p3) or stored_count == 3
         self._num_players = 3 if wants_three else 2
+        if self._num_players < 2:
+            self._num_players = 2
         self.player1_name = p1 or "Player 1"
         self.player2_name = p2 or "Player 2"
         if self._num_players == 3:
@@ -562,6 +574,7 @@ class DiceGameScreen(Screen):
 
         Clock.schedule_once(lambda dt: self._apply_initial_portraits(), 0)
         Clock.schedule_once(lambda dt: self._place_coins_near_portraits(), 0.05)
+        Clock.schedule_once(lambda dt: self._refresh_coin_idle_positions(), 0.1)
         if self._online:
             self._start_online_sync()
         else:
@@ -661,10 +674,6 @@ class DiceGameScreen(Screen):
         if self._current_player != 0:
             self._debug(f"[BOT TURN] Player {self._current_player} auto-roll soon")
             Clock.schedule_once(lambda dt: self._auto_roll_current(), 0.3)
-        else:
-            self._debug("[TIMER] Offline player idle → auto-roll in 10s")
-            self._cancel_turn_timer()
-            self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
 
     # ---------- dice ----------
     def roll_dice(self):
@@ -1806,10 +1815,7 @@ class DiceGameScreen(Screen):
             self._debug("[TIMER] Online auto-roll disabled — awaiting manual input.")
             return
 
-        # offline
-        if self._current_player == 0:
-            self._debug("[TIMER] 10s offline auto-roll for player 0")
-            self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
+        # offline players roll manually; bots use _auto_roll_current
 
     def _cancel_turn_timer(self):
         if hasattr(self, "_turn_timer") and self._turn_timer:
@@ -1880,9 +1886,6 @@ class DiceGameScreen(Screen):
             if self._online:
                 self._debug("[TURN] Online mode idle until player rolls manually.")
                 return
-
-            if self._current_player == 0:
-                self._turn_timer = Clock.schedule_once(lambda dt: self.roll_dice(), 10)
 
         except Exception as e:
             self._debug(f"[UNLOCK][ERR] {e}")

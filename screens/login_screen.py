@@ -146,8 +146,22 @@ class LoginScreen(Screen):
                 raise InvalidCredentialsError(resp.text or "Wrong password.")
             return True
 
-        if last_error:
+        login_url = f"{base}/auth/login"
+        try:
+            resp = requests.post(login_url, json=payload, timeout=8, verify=False)
+        except Exception as exc:
+            if last_error:
+                raise RuntimeError(last_error)
+            raise RuntimeError(str(exc))
+
+        if resp.status_code in (200, 201):
+            return True
+        if resp.status_code in (401, 403):
+            raise InvalidCredentialsError("Wrong password.")
+        if resp.status_code == 404 and last_error:
             raise RuntimeError(last_error)
+        if 400 <= resp.status_code < 500:
+            raise InvalidCredentialsError(resp.text or "Wrong password.")
         return True
 
     def send_otp_to_user(self) -> None:
