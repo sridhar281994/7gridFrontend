@@ -1,3 +1,4 @@
+# utils/otp_utils.py
 import os
 import time
 from typing import Optional, Dict, Any
@@ -7,17 +8,15 @@ import requests
 BACKEND_BASE = os.getenv("BACKEND_BASE", "https://spin-api-pba3.onrender.com").rstrip("/")
 
 # TLS verification:
-# - Set OTP_VERIFY_SSL=true in env to enforce cert validation
-# - Default is False because some laptops have corp/root-ca issues
 VERIFY_SSL = os.getenv("OTP_VERIFY_SSL", "false").lower() == "true"
 PASSWORD_RESET_PATH = os.getenv("PASSWORD_RESET_PATH", "/auth/reset-password")
 
-# Cache whether the new login OTP endpoints exist in the backend.
+# Cache new login OTP endpoint availability
 _LOGIN_OTP_ENDPOINT_AVAILABLE: Optional[bool] = None
 
-# Networking timeouts / retries
-TIMEOUT = float(os.getenv("OTP_HTTP_TIMEOUT", "40")) # per-request timeout
-RETRIES = int(os.getenv("OTP_HTTP_RETRIES", "2")) # how many times to retry on failure
+# Networking settings
+TIMEOUT = float(os.getenv("OTP_HTTP_TIMEOUT", "40"))
+RETRIES = int(os.getenv("OTP_HTTP_RETRIES", "2"))
 
 
 def _url(path: str) -> str:
@@ -53,6 +52,7 @@ def _request(
     token: Optional[str] = None,
     timeout: float = TIMEOUT,
 ) -> Dict[str, Any]:
+
     url = _url(path)
     attempts = 1 + max(0, RETRIES)
     last_exc: Optional[Exception] = None
@@ -68,10 +68,10 @@ def _request(
                 timeout=timeout,
                 verify=VERIFY_SSL,
             )
+
             if not (200 <= resp.status_code < 300):
                 msg = _extract_error(resp)
-                http_err = requests.HTTPError(msg, response=resp)
-                raise http_err
+                raise requests.HTTPError(msg, response=resp)
 
             try:
                 return resp.json()
@@ -81,9 +81,9 @@ def _request(
         except requests.ReadTimeout:
             last_exc = f"Timeout after {timeout}s (attempt {i+1}/{attempts})"
             if i < attempts - 1:
-                time.sleep(1.5) # short wait before retry
+                time.sleep(1.5)
                 continue
-            raise RuntimeError(f"Server cold start or too slow: {last_exc}")
+            raise RuntimeError(f"Server too slow: {last_exc}")
 
         except requests.HTTPError as err:
             raise err
@@ -97,20 +97,19 @@ def _request(
 
     if last_exc:
         raise RuntimeError(str(last_exc))
+
     raise RuntimeError("Unexpected request failure")
 
 
-# --------------------
-# OTP (phone -> email)
-# --------------------
+# ======================================================
+# ORIGINAL OTP (legacy only)
+# ======================================================
 def send_otp(phone: str) -> Dict[str, Any]:
-    payload = {"phone": str(phone).strip()}
-    return _request("POST", "/auth/send-otp", json=payload)
+    return _request("POST", "/auth/send-otp", json={"phone": phone})
 
 
 def verify_otp(phone: str, otp: str) -> Dict[str, Any]:
-    payload = {"phone": str(phone).strip(), "otp": str(otp).strip()}
-    return _request("POST", "/auth/verify-otp", json=payload)
+    return _request("POST", "/auth/verify-otp", json={"phone": phone, "otp": otp})
 
 
 def send_otp_phone(phone: str) -> Dict[str, Any]:
@@ -121,6 +120,9 @@ def verify_otp_phone(phone: str, otp: str) -> Dict[str, Any]:
     return verify_otp(phone, otp)
 
 
+# ======================================================
+# Password reset
+# ======================================================
 def reset_password(
     new_password: str,
     *,
@@ -128,36 +130,29 @@ def reset_password(
     phone: Optional[str] = None,
     otp: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Reset account password after OTP verification.
-
-    Args:
-        new_password: Desired password value.
-        token: Optional bearer token (if backend expects authenticated change).
-        phone: Optional phone identifier (if backend requires it).
-        otp: Optional OTP value (for backends that verify in the same request).
-    """
 
     payload: Dict[str, Any] = {"password": new_password}
+
     if not token:
         if phone:
-            payload["phone"] = str(phone).strip()
+            payload["phone"] = phone
         if otp:
-            payload["otp"] = str(otp).strip()
+            payload["otp"] = otp
         if not (phone and otp):
-            raise ValueError("reset_password requires either token or (phone + otp).")
+            raise ValueError("reset_password requires token OR (phone+otp).")
 
     return _request("POST", PASSWORD_RESET_PATH, json=payload, token=token)
 
 
-# -------------
+# ======================================================
 # Registration
-# -------------
+# ======================================================
 def register_user(name: str,
                   phone: str,
                   email: str,
                   password: str,
                   upi_id: Optional[str] = None) -> Dict[str, Any]:
+
     body = {
         "name": name.strip(),
         "phone": phone.strip(),
@@ -166,12 +161,13 @@ def register_user(name: str,
     }
     if upi_id:
         body["upi_id"] = upi_id.strip()
+
     return _request("POST", "/auth/register", json=body)
 
 
-# ---------
+# ======================================================
 # Profile
-# ---------
+# ======================================================
 def get_profile(token: str) -> Dict[str, Any]:
     return _request("GET", "/users/me", token=token)
 
@@ -179,138 +175,149 @@ def get_profile(token: str) -> Dict[str, Any]:
 def update_profile(token: str,
                    name: Optional[str] = None,
                    upi_id: Optional[str] = None) -> Dict[str, Any]:
-    params: Dict[str, str] = {}
-    if name is not None and name.strip():
-        params["name"] = name.strip()
-    if upi_id is not None and upi_id.strip():
-        params["upi_id"] = upi_id.strip()
-    return _request("POST", "/users/me/profile", params=params, token=token)
+    """
+    Backend expects PATCH /users/me with JSON body
+    """
+    payload: Dict[str, Any] = {}
+    if name is not None:
+        payload["name"] = name.strip()
+    if upi_id is not None:
+        payload["upi_id"] = upi_id.strip()
+
+    return _request("PATCH", "/users/me", json=payload, token=token)
 
 
-# ---------------------------------------------------
-# Matchmaking helpers
-# ---------------------------------------------------
+# ======================================================
+# Matchmaking blocks (unchanged)
+# ======================================================
 def list_waiting_matches(token: str) -> Dict[str, Any]:
     return _request("GET", "/matches/list", token=token)
 
 
 def create_or_wait_match(token: str, stake_amount: int) -> Dict[str, Any]:
-    body = {"stake_amount": stake_amount}
-    return _request("POST", "/matches/create", json=body, token=token)
+    return _request("POST", "/matches/create", json={"stake_amount": stake_amount}, token=token)
 
 
 def join_match(token: str, match_id: int) -> Dict[str, Any]:
-    body = {"match_id": match_id}
-    return _request("POST", "/matches/join", json=body, token=token)
+    return _request("POST", "/matches/join", json={"match_id": match_id}, token=token)
 
 
 def check_match_ready(token: str, match_id: int) -> Dict[str, Any]:
     return _request("GET", f"/matches/check?match_id={match_id}", token=token)
 
 
-# ---------------------------------------------------
-# Dice roll helper (NEW)
-# ---------------------------------------------------
 def roll_dice(token: str, match_id: int) -> Dict[str, Any]:
-    """Roll a dice for this match (server ensures fairness & sync)."""
-    body = {"match_id": int(match_id)}
-    return _request("POST", "/matches/roll", json=body, token=token)
+    return _request("POST", "/matches/roll", json={"match_id": match_id}, token=token)
 
 
-# ---------------------------------------------------
-# Login OTP helpers (email/username + password)
-# ---------------------------------------------------
-def _login_identifier_payload(identifier: str) -> Dict[str, str]:
-    ident = (identifier or "").strip()
-    payload: Dict[str, str] = {"identifier": ident}
-    if not ident:
-        return payload
-    if "@" in ident:
-        payload["email"] = ident
-    elif ident.isdigit():
-        payload["phone"] = ident
-    else:
-        payload["username"] = ident
-    return payload
-
+# ======================================================
+# NEW LOGIN OTP SYSTEM (exactly matching your backend)
+# ======================================================
 
 class InvalidCredentialsError(PermissionError):
-    """Raised when the backend reports wrong password/identifier."""
+    pass
 
 
 class LegacyOtpUnavailable(RuntimeError):
-    """Raised when fallback OTP cannot run for non-phone identifiers."""
+    pass
 
 
+# ------------------------------
+# 1) Password check
+# ------------------------------
+def password_check(identifier: str, password: str) -> bool:
+    """
+    Backend expects: {"identifier": str, "password": str}
+    Backend parses identifier internally (email if contains @, phone if digits)
+    """
+    payload = {
+        "identifier": identifier.strip(),
+        "password": password
+    }
+
+    try:
+        data = _request("POST", "/auth/login/password-check", json=payload)
+        return data.get("ok") is True
+
+    except requests.HTTPError as err:
+        status = getattr(err.response, "status_code", None)
+        if status in (401, 403):
+            raise InvalidCredentialsError("Wrong password")
+        if status == 404:
+            # backend does not support this → treat as valid
+            return True
+        raise
+
+
+# ------------------------------
+# 2) Request OTP
+# ------------------------------
 def request_login_otp(identifier: str, password: str) -> Dict[str, Any]:
     """
-    Trigger an OTP for login after validating identifier + password.
-    Falls back to legacy phone-only OTP if the backend does not expose
-    the new email/password-based endpoint.
+    Backend expects: {"identifier": str, "password": str}
+    Backend parses identifier internally (email if contains @, phone if digits)
     """
-
-    payload = _login_identifier_payload(identifier)
-    payload["password"] = password
-
-    def _legacy_send(err: Exception | None = None) -> Dict[str, Any]:
-        phone = payload.get("phone")
-        if phone:
-            return send_otp(phone)
-        raise LegacyOtpUnavailable(
-            "Secure OTP login requires using your registered phone number."
-        ) from err
+    payload = {
+        "identifier": identifier.strip(),
+        "password": password
+    }
 
     global _LOGIN_OTP_ENDPOINT_AVAILABLE
-    if _LOGIN_OTP_ENDPOINT_AVAILABLE is False:
-        return _legacy_send()
-
     try:
         data = _request("POST", "/auth/login/request-otp", json=payload)
         _LOGIN_OTP_ENDPOINT_AVAILABLE = True
         return data
+
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
+
         if status in (401, 403):
-            raise InvalidCredentialsError("Incorrect password or identifier.") from err
+            raise InvalidCredentialsError("Incorrect password or identifier.")
+
         if status == 404:
             _LOGIN_OTP_ENDPOINT_AVAILABLE = False
-            return _legacy_send(err)
+            # Try legacy OTP if identifier is a phone number
+            ident = identifier.strip()
+            if ident.isdigit():
+                return send_otp(ident)
+            raise LegacyOtpUnavailable("Phone number required for fallback OTP.")
+
         raise
 
 
-def verify_login_with_otp(identifier: str, password: str, otp: str) -> Dict[str, Any]:
+# ------------------------------
+# 3) Verify OTP
+# ------------------------------
+def verify_login_with_otp(identifier: str, password: str, otp: str, channel: str = "app") -> Dict[str, Any]:
     """
-    Verify OTP-based login with identifier + password.
-    Falls back to legacy phone OTP verification for backward compatibility.
+    Backend expects: {"identifier": str, "password": str, "otp": str, "channel": Optional[str]}
+    Backend parses identifier internally (email if contains @, phone if digits)
     """
-
-    payload = _login_identifier_payload(identifier)
-    payload["password"] = password
-    payload["otp"] = str(otp).strip()
-
-    def _legacy_verify(err: Exception | None = None) -> Dict[str, Any]:
-        phone = payload.get("phone")
-        if phone:
-            return verify_otp(phone, otp)
-        raise LegacyOtpUnavailable(
-            "Secure OTP login requires using your registered phone number."
-        ) from err
+    payload = {
+        "identifier": identifier.strip(),
+        "password": password,
+        "otp": otp.strip(),
+        "channel": channel.lower()
+    }
 
     global _LOGIN_OTP_ENDPOINT_AVAILABLE
-    if _LOGIN_OTP_ENDPOINT_AVAILABLE is False:
-        return _legacy_verify()
-
     try:
         data = _request("POST", "/auth/login/verify-otp", json=payload)
         _LOGIN_OTP_ENDPOINT_AVAILABLE = True
         return data
+
     except requests.HTTPError as err:
         status = getattr(err.response, "status_code", None)
+
         if status in (401, 403):
-            raise InvalidCredentialsError("Incorrect password or identifier.") from err
+            raise InvalidCredentialsError("Incorrect password/OTP/identifier.")
+
         if status == 404:
             _LOGIN_OTP_ENDPOINT_AVAILABLE = False
-            return _legacy_verify(err)
-        raise
-    except Exception:
+            # Try legacy OTP if identifier is a phone number
+            ident = identifier.strip()
+            if ident.isdigit():
+                return verify_otp(ident, otp)
+            raise LegacyOtpUnavailable("Phone number required for fallback verify.")
+
         raise
