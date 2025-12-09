@@ -1,16 +1,14 @@
 from threading import Thread
 from typing import Optional, Dict, Any
 
+import requests
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.properties import NumericProperty
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
-# frontend helpers
 from utils import storage
 from utils.otp_utils import (
     InvalidCredentialsError,
@@ -22,14 +20,11 @@ from utils.otp_utils import (
 
 
 def _safe_text(screen: Screen, wid: str, default: str = "") -> str:
-    """Read and strip TextInput text safely."""
     w = getattr(screen, "ids", {}).get(wid)
     return (w.text or "").strip() if w else default
 
 
 def _popup(title: str, msg: str) -> None:
-    """Thread-safe popup from worker threads that auto-closes after a delay."""
-
     def _open(*_):
         popup = Popup(
             title=title,
@@ -38,8 +33,6 @@ def _popup(title: str, msg: str) -> None:
             auto_dismiss=True,
         )
         popup.open()
-
-        # Auto-close after 2 seconds
         Clock.schedule_once(lambda dt: popup.dismiss(), 2)
 
     Clock.schedule_once(_open, 0)
@@ -60,33 +53,35 @@ class LoginScreen(Screen):
         height = self.height or Window.height or 1
         width_ratio = width / 520.0
         height_ratio = height / 720.0
-        scale = max(0.75, min(1.25, min(width_ratio, height_ratio)))
-        self.font_scale = scale
+        self.font_scale = max(0.75, min(1.25, min(width_ratio, height_ratio)))
 
-    # ---------- navigation ----------
+    # -----------------------
+    # Navigation
+    # -----------------------
     def go_back(self):
         if self.manager:
             self.manager.current = "welcome"
 
-    def open_forgot_password(self) -> None:
-        """Navigate to the forgot password flow, pre-filling the phone number."""
+    def open_forgot_password(self):
         if not self.manager:
             return
 
         phone = _safe_text(self, "phone_input")
         try:
-            forgot_screen = self.manager.get_screen("forgot_password")
+            forgot = self.manager.get_screen("forgot_password")
         except Exception:
-            forgot_screen = None
+            forgot = None
 
-        if forgot_screen and hasattr(forgot_screen, "prefill_phone"):
-            forgot_screen.prefill_phone(phone)
+        if forgot and hasattr(forgot, "prefill_phone"):
+            forgot.prefill_phone(phone)
 
         self.manager.current = "forgot_password"
 
-    # ---------- UI actions (bound in KV) ----------
+    # -----------------------
+    # Helpers
+    # -----------------------
     def _read_identifier(self) -> str:
-        return _safe_text(self, "phone_input")  # legacy id reused for email/username
+        return _safe_text(self, "phone_input")
 
     def _read_password(self) -> str:
         return _safe_text(self, "password_input")
@@ -101,64 +96,64 @@ class LoginScreen(Screen):
             return True
         return len(identifier) >= 3
 
-    def send_otp_to_user(self) -> None:
+    # -----------------------
+    # Send OTP
+    # -----------------------
+    def send_otp_to_user(self):
         identifier = self._read_identifier()
         password = self._read_password()
 
         if not self._validate_identifier(identifier):
-            _popup("Error", "Enter a valid registered email or username.")
+            _popup("Error", "Enter a valid registered email or number.")
             return
         if len(password) < 4:
-            _popup("Error", "Enter your account password.")
+            _popup("Error", "Enter your password.")
             return
 
         def work():
+            # Request OTP - this will validate the password automatically
             try:
-                data: Dict[str, Any] = request_login_otp(identifier, password)
+                data = request_login_otp(identifier, password)
                 ok = bool(data.get("ok", True))
-                msg = data.get("message") or ("OTP sent successfully." if ok else "Failed to send OTP.")
+                msg = data.get("message") or ("OTP sent" if ok else "Failed to send OTP")
                 _popup("Success" if ok else "Error", msg)
                 return
             except InvalidCredentialsError:
                 _popup("Error", "Wrong password.")
                 return
             except LegacyOtpUnavailable:
-                _popup(
-                    "Info",
-                    "OTP login is currently available only with your registered phone number. "
-                    "Please enter that number to receive an OTP.",
-                )
+                _popup("Info", "OTP works only for registered phone number.")
                 return
             except Exception as exc:
-                if self._looks_like_wrong_password(exc):
-                    _popup("Error", "Wrong password.")
-                    return
                 _popup("Error", f"Send OTP error:\n{exc}")
                 return
 
         Thread(target=work, daemon=True).start()
 
-    def verify_and_login(self) -> None:
+    # -----------------------
+    # Verify OTP + Login
+    # -----------------------
+    def verify_and_login(self):
         identifier = self._read_identifier()
         password = self._read_password()
         otp = _safe_text(self, "otp_input")
+
         if not self._validate_identifier(identifier):
-            _popup("Error", "Enter a valid registered email or username.")
+            _popup("Error", "Enter a valid registered email or number.")
             return
         if len(password) < 4:
-            _popup("Error", "Enter your account password.")
+            _popup("Error", "Enter your password.")
             return
         if not otp:
-            _popup("Error", "Enter the OTP from your email.")
+            _popup("Error", "Enter the OTP.")
             return
 
         def work():
             try:
-                data: Dict[str, Any] = verify_login_with_otp(identifier, password, otp)
-                token: Optional[str] = data.get("access_token") or data.get("token")
-                user: Optional[Dict[str, Any]] = data.get("user")
+                data = verify_login_with_otp(identifier, password, otp)
+                token = data.get("access_token") or data.get("token")
+                user = data.get("user")
 
-                # If user not returned, try fetching profile
                 if token and not user:
                     try:
                         prof = get_profile(token)
@@ -168,35 +163,28 @@ class LoginScreen(Screen):
                         pass
 
                 if not token:
-                    _popup("Error", f"Invalid OTP.\n{data}")
+                    _popup("Error", "Invalid OTP.")
                     return
 
-                # Persist locally (FIXED: using set_token / set_user)
-                if token:
-                    storage.set_token(token)
+                storage.set_token(token)
                 if isinstance(user, dict):
                     storage.set_user(user)
 
-                def after_login(*_):
+                def after(*_):
                     if self.manager:
                         self.manager.current = "stage"
                     _popup("Success", "Login successful.")
 
-                Clock.schedule_once(after_login, 0)
+                Clock.schedule_once(after, 0)
+
             except InvalidCredentialsError:
                 _popup("Error", "Wrong password.")
                 return
-            except Exception as e:
-                if self._looks_like_wrong_password(e):
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "password" in msg and ("wrong" in msg or "invalid" in msg):
                     _popup("Error", "Wrong password.")
                     return
-                _popup("Error", f"Verify OTP error:\n{e}")
+                _popup("Error", f"Verify OTP error:\n{exc}")
 
         Thread(target=work, daemon=True).start()
-
-    def _looks_like_wrong_password(self, exc: Exception) -> bool:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status in (401, 403):
-            return True
-        msg = str(exc).lower()
-        return "password" in msg and any(token in msg for token in ("wrong", "invalid", "incorrect"))
