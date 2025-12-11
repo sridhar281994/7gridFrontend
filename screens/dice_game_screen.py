@@ -29,6 +29,7 @@ except Exception:
 
 try:
     import websocket  # type: ignore
+
     WEBSOCKET_OK = True
 except Exception:
     WEBSOCKET_OK = False
@@ -84,14 +85,14 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             return
 
         spin_seq = (
-            Animation(rotation_angle=360, d=0.28, t="out_cubic")  # clockwise
-            + Animation(rotation_angle=0, d=0.32, t="out_cubic")  # anticlockwise back to rest
+                Animation(rotation_angle=360, d=0.28, t="out_cubic")  # clockwise
+                + Animation(rotation_angle=0, d=0.32, t="out_cubic")  # anticlockwise back to rest
         )
 
         zoom = (
-            Animation(scale_value=1.25, d=0.2, t="out_back")
-            + Animation(scale_value=0.95, d=0.15, t="in_out_quad")
-            + Animation(scale_value=1.0, d=0.15, t="out_quad")
+                Animation(scale_value=1.25, d=0.2, t="out_back")
+                + Animation(scale_value=0.95, d=0.15, t="in_out_quad")
+                + Animation(scale_value=1.0, d=0.15, t="out_quad")
         )
 
         self._anim = spin_seq
@@ -121,7 +122,6 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 
 # register for KV
 Factory.register("PolygonDice", cls=PolygonDice)
-
 
 MAX_CHAT_LEN = 50
 
@@ -195,9 +195,10 @@ class DiceGameScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._positions = [-1, -1, -1]
-        self._coins = [None, None, None]
-        self._spawned_on_board = [False, False, False]
+        # Support 2 coins per player: [player][coin_index]
+        self._positions = [[-1, -1], [-1, -1], [-1, -1]]
+        self._coins = [[None, None], [None, None], [None, None]]
+        self._spawned_on_board = [[False, False], [False, False], [False, False]]
         self._coins_finished = [0, 0, 0]
         self._finished_markers = [[], [], []]
         self._winner_shown = False
@@ -254,46 +255,69 @@ class DiceGameScreen(Screen):
             parent.add_widget(w)
 
     def _bring_coins_to_front(self):
-        for c in self._coins:
-            if c:
-                self._add_on_top(c)
+        for player_coins in self._coins:
+            if player_coins:
+                for c in player_coins:
+                    if c:
+                        self._add_on_top(c)
 
     def _coin_texture(self, idx: int) -> str:
         return COIN_TEXTURES[idx % len(COIN_TEXTURES)]
 
-    def _coin_portrait_offset(self, idx: int) -> tuple[float, float]:
+    def _coin_portrait_offset(self, player_idx: int, coin_idx: int) -> tuple[float, float]:
+        """Get offset for coin near player portrait. coin_idx: 0 or 1 for the two coins."""
         if self._num_players == 3:
-            mapping = {0: (-dp(8), 0), 1: (dp(8), 0), 2: (0, dp(4))}
-            return mapping.get(idx, (0, 0))
-        return {0: (-dp(6), 0), 1: (dp(6), 0)}.get(idx, (0, 0))
+            base_offsets = {0: (-dp(8), 0), 1: (dp(8), 0), 2: (0, dp(4))}
+            base_x, base_y = base_offsets.get(player_idx, (0, 0))
+            # Offset second coin slightly
+            coin_offset = dp(12) if coin_idx == 1 else -dp(12)
+            return (base_x + coin_offset, base_y - dp(8) if coin_idx == 1 else base_y)
+        else:
+            base_offsets = {0: (-dp(6), 0), 1: (dp(6), 0)}
+            base_x, base_y = base_offsets.get(player_idx, (0, 0))
+            # Offset second coin slightly
+            coin_offset = dp(10) if coin_idx == 1 else -dp(10)
+            return (base_x + coin_offset, base_y - dp(6) if coin_idx == 1 else base_y)
 
-    def _position_coin_near_portrait(self, idx: int):
-        coin = self._coins[idx] if idx < len(self._coins) else None
-        pic = self.ids.get(f"p{idx + 1}_pic")
-        if not coin or not pic:
-            return
-        layer = self._root_float()
-        cx, cy = self._map_center_to_parent(layer, pic)
-        base = dp(24) if self._num_players == 2 else dp(21)
-        coin.size = (base, base)
-        off_x, off_y = self._coin_portrait_offset(idx)
-        target = (cx + off_x, cy - dp(50) + off_y)
-        safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
-        coin.center = (safe_x, safe_y)
-        coin.opacity = 1
+    def _position_coin_near_portrait(self, player_idx: int, coin_idx: int = None):
+        """Position coin(s) near player portrait. If coin_idx is None, position both coins."""
+        if coin_idx is not None:
+            # Position specific coin
+            if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
+                return
+            coin = self._coins[player_idx][coin_idx]
+            pic = self.ids.get(f"p{player_idx + 1}_pic")
+            if not coin or not pic:
+                return
+            layer = self._root_float()
+            cx, cy = self._map_center_to_parent(layer, pic)
+            base = dp(24) if self._num_players == 2 else dp(21)
+            coin.size = (base, base)
+            off_x, off_y = self._coin_portrait_offset(player_idx, coin_idx)
+            target = (cx + off_x, cy - dp(50) + off_y)
+            safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
+            coin.center = (safe_x, safe_y)
+            coin.opacity = 1
+        else:
+            # Position both coins for this player
+            self._position_coin_near_portrait(player_idx, 0)
+            self._position_coin_near_portrait(player_idx, 1)
 
-    def _move_coin_home(self, idx: int):
-        if idx >= len(self._spawned_on_board):
+    def _move_coin_home(self, player_idx: int, coin_idx: int):
+        """Move specific coin back home (near portrait)."""
+        if player_idx >= len(self._spawned_on_board) or coin_idx >= len(self._spawned_on_board[player_idx]):
             return
-        if self._spawned_on_board[idx]:
+        if self._spawned_on_board[player_idx][coin_idx]:
             return
-        self._position_coin_near_portrait(idx)
+        self._position_coin_near_portrait(player_idx, coin_idx)
 
     def _refresh_coin_idle_positions(self):
+        """Refresh positions of all idle coins (not spawned on board)."""
         limit = min(self._num_players, len(self._spawned_on_board))
-        for idx in range(limit):
-            if not self._spawned_on_board[idx]:
-                self._position_coin_near_portrait(idx)
+        for player_idx in range(limit):
+            for coin_idx in range(2):  # 2 coins per player
+                if not self._spawned_on_board[player_idx][coin_idx]:
+                    self._position_coin_near_portrait(player_idx, coin_idx)
 
     def _clear_finished_markers(self):
         if not hasattr(self, "_finished_markers") or not self._finished_markers:
@@ -333,12 +357,13 @@ class DiceGameScreen(Screen):
             self._finished_markers.extend([[] for _ in range(player_idx - len(self._finished_markers) + 1)])
         self._finished_markers[player_idx].append(marker)
 
-    def _ready_next_coin(self, player_idx: int):
-        if player_idx >= len(self._positions):
+    def _ready_next_coin(self, player_idx: int, coin_idx: int):
+        """Reset a coin after it reaches the final box, preparing for next coin."""
+        if player_idx >= len(self._positions) or coin_idx >= len(self._positions[player_idx]):
             return
-        self._spawned_on_board[player_idx] = False
-        self._positions[player_idx] = -1
-        self._move_coin_home(player_idx)
+        self._spawned_on_board[player_idx][coin_idx] = False
+        self._positions[player_idx][coin_idx] = -1
+        self._move_coin_home(player_idx, coin_idx)
 
     def _map_center_to_parent(self, target_parent, widget):
         try:
@@ -494,8 +519,8 @@ class DiceGameScreen(Screen):
     # ---------- state ----------
     def _reset_game_state(self):
         """Reset local positions and flags; used mainly for offline/bot games."""
-        self._positions = [-1, -1, -1]
-        self._spawned_on_board = [False, False, False]
+        self._positions = [[-1, -1], [-1, -1], [-1, -1]]
+        self._spawned_on_board = [[False, False], [False, False], [False, False]]
         self._coins_finished = [0, 0, 0]
         self._clear_finished_markers()
         self.dice_result = ""
@@ -519,8 +544,10 @@ class DiceGameScreen(Screen):
             pic = self.ids.get(f"p{idx + 1}_pic")
             if pic:
                 pic.opacity = 1
-            if idx < len(self._coins) and self._coins[idx]:
-                self._coins[idx].opacity = 1
+            if idx < len(self._coins):
+                for coin in self._coins[idx]:
+                    if coin:
+                        coin.opacity = 1
 
         self._refresh_coin_idle_positions()
 
@@ -653,8 +680,8 @@ class DiceGameScreen(Screen):
             Animation.cancel_all(widget, "opacity")
             if active:
                 anim = (
-                    Animation(opacity=0.6, d=1.0, t="in_out_quad")
-                    + Animation(opacity=0.2, d=1.0, t="in_out_quad")
+                        Animation(opacity=0.6, d=1.0, t="in_out_quad")
+                        + Animation(opacity=0.2, d=1.0, t="in_out_quad")
                 )
                 anim.repeat = True
                 anim.start(widget)
@@ -838,35 +865,45 @@ class DiceGameScreen(Screen):
             Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.4)
             return
 
-        old = self._positions[p] if self._spawned_on_board[p] else -1
-        new_pos = old + roll if self._spawned_on_board[p] else -1
+        # Find which coin to move: first unspawned coin, or first spawned coin
+        coin_idx = None
+        for cidx in range(2):
+            if not self._spawned_on_board[p][cidx]:
+                coin_idx = cidx
+                break
+        if coin_idx is None:
+            # All coins spawned, use first one (coin 0)
+            coin_idx = 0
+
+        old = self._positions[p][coin_idx] if self._spawned_on_board[p][coin_idx] else -1
+        new_pos = old + roll if self._spawned_on_board[p][coin_idx] else -1
         BOARD_MAX = FINAL_BOX_INDEX
         DANGER_BOX = 3
 
-        self._debug(f"[OFFLINE] Player {p} rolled {roll} (from {old})")
+        self._debug(f"[OFFLINE] Player {p} coin {coin_idx} rolled {roll} (from {old})")
 
         # --- Rule 1: Spawn only when rolling 1 ---
-        if not self._spawned_on_board[p]:
+        if not self._spawned_on_board[p][coin_idx]:
             if roll == 1:
-                self._spawned_on_board[p] = True
-                self._positions[p] = 0
-                self._move_coin_to_box(p, 0)
-                self._debug(f"[SPAWN] Player {p} enters at box 0")
+                self._spawned_on_board[p][coin_idx] = True
+                self._positions[p][coin_idx] = 0
+                self._move_coin_to_box(p, coin_idx, 0)
+                self._debug(f"[SPAWN] Player {p} coin {coin_idx} enters at box 0")
             else:
-                self._debug(f"[SKIP] Player {p} not spawned (roll={roll})")
+                self._debug(f"[SKIP] Player {p} coin {coin_idx} not spawned (roll={roll})")
             Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.5)
             return
 
         # --- Rule 2: Danger zone (box 3 → reset to 0) ---
         if new_pos == DANGER_BOX:
-            self._debug(f"[DANGER] Player {p} hit box 3 → reset to start")
-            self._positions[p] = DANGER_BOX
-            self._move_coin_to_box(p, DANGER_BOX, stepwise=True, start_pos=old)
+            self._debug(f"[DANGER] Player {p} coin {coin_idx} hit box 3 → reset to start")
+            self._positions[p][coin_idx] = DANGER_BOX
+            self._move_coin_to_box(p, coin_idx, DANGER_BOX, stepwise=True, start_pos=old)
             self._game_active = False
 
             def do_reverse_reset(*_):
-                self._move_coin_to_box(p, 0, reverse=True)
-                self._debug(f"[RESET] Player {p} safely returned to start")
+                self._move_coin_to_box(p, coin_idx, 0, reverse=True)
+                self._debug(f"[RESET] Player {p} coin {coin_idx} safely returned to start")
                 self._game_active = True
                 self._end_turn_and_highlight()
 
@@ -875,8 +912,8 @@ class DiceGameScreen(Screen):
 
         # --- Rule 3: Win condition (==7) ---
         if new_pos == BOARD_MAX:
-            self._positions[p] = BOARD_MAX
-            self._move_coin_to_box(p, BOARD_MAX)
+            self._positions[p][coin_idx] = BOARD_MAX
+            self._move_coin_to_box(p, coin_idx, BOARD_MAX)
             self._coins_finished[p] += 1
             self._add_finished_marker(p)
             progress = self._coins_finished[p]
@@ -887,7 +924,7 @@ class DiceGameScreen(Screen):
                 return
 
             def prep_next(*_):
-                self._ready_next_coin(p)
+                self._ready_next_coin(p, coin_idx)
                 self._end_turn_and_highlight()
 
             Clock.schedule_once(prep_next, 0.9)
@@ -895,26 +932,28 @@ class DiceGameScreen(Screen):
 
         # --- Rule 4: Overshoot (>FINAL_BOX) → stay on current box ---
         if new_pos > BOARD_MAX:
-            self._debug(f"[OVERSHOOT] Player {p} rolled {roll} → stays at {old}")
-            self._positions[p] = old
-            self._move_coin_to_box(p, old)
+            self._debug(f"[OVERSHOOT] Player {p} coin {coin_idx} rolled {roll} → stays at {old}")
+            self._positions[p][coin_idx] = old
+            self._move_coin_to_box(p, coin_idx, old)
             Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.5)
             return
 
         # --- Rule 5: Normal move ---
-        self._positions[p] = new_pos
-        self._move_coin_to_box(p, new_pos, stepwise=True, start_pos=old)
-        self._debug(f"[MOVE] Player {p} moved to box {new_pos}")
+        self._positions[p][coin_idx] = new_pos
+        self._move_coin_to_box(p, coin_idx, new_pos, stepwise=True, start_pos=old)
+        self._debug(f"[MOVE] Player {p} coin {coin_idx} moved to box {new_pos}")
 
         # --- Rule 6: Capture — if land on opponent, send them to 0 ---
         for idx in range(self._num_players):
             if idx == p:
                 continue
-            # only capture coins that have actually spawned
-            if self._spawned_on_board[idx] and self._positions[idx] == self._positions[p]:
-                self._debug(f"[CAPTURE] Player {p} captures player {idx} at box {new_pos} → player {idx} back to 0")
-                self._positions[idx] = 0
-                self._move_coin_to_box(idx, 0)
+            # Check all coins of opponent
+            for cidx in range(2):
+                if self._spawned_on_board[idx][cidx] and self._positions[idx][cidx] == new_pos:
+                    self._debug(
+                        f"[CAPTURE] Player {p} coin {coin_idx} captures player {idx} coin {cidx} at box {new_pos} → player {idx} coin {cidx} back to 0")
+                    self._positions[idx][cidx] = 0
+                    self._move_coin_to_box(idx, cidx, 0)
 
         Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
 
@@ -1210,31 +1249,42 @@ class DiceGameScreen(Screen):
     def _ensure_coin_widgets(self):
         layer = self._root_float()
 
-        def ensure(idx, src):
-            if self._coins[idx] is None:
-                self._coins[idx] = Image(source=src, size_hint=(None, None), opacity=1)
-                layer.add_widget(self._coins[idx])
-            elif self._coins[idx].parent is not layer:
+        def ensure(player_idx, coin_idx, src):
+            if player_idx >= len(self._coins):
+                return
+            if coin_idx >= len(self._coins[player_idx]):
+                return
+            if self._coins[player_idx][coin_idx] is None:
+                self._coins[player_idx][coin_idx] = Image(source=src, size_hint=(None, None), opacity=1)
+                layer.add_widget(self._coins[player_idx][coin_idx])
+            elif self._coins[player_idx][coin_idx].parent is not layer:
                 try:
-                    if self._coins[idx].parent:
-                        self._coins[idx].parent.remove_widget(self._coins[idx])
+                    if self._coins[player_idx][coin_idx].parent:
+                        self._coins[player_idx][coin_idx].parent.remove_widget(self._coins[player_idx][coin_idx])
                 except Exception:
                     pass
-                layer.add_widget(self._coins[idx])
+                layer.add_widget(self._coins[player_idx][coin_idx])
 
-        ensure(0, self._coin_texture(0))
-        ensure(1, self._coin_texture(1))
-        if self._num_players == 3:
-            ensure(2, self._coin_texture(2))
+        # Create 2 coins for each player
+        for player_idx in range(self._num_players):
+            src = self._coin_texture(player_idx)
+            ensure(player_idx, 0, src)  # First coin
+            ensure(player_idx, 1, src)  # Second coin
 
         self._bring_coins_to_front()
 
     def _place_coins_near_portraits(self):
+        """Place all coins near their player portraits. Both coins should be visible initially."""
         self._ensure_coin_widgets()
-        for idx in range(self._num_players):
-            if idx < len(self._spawned_on_board) and self._spawned_on_board[idx]:
-                continue
-            self._position_coin_near_portrait(idx)
+        for player_idx in range(self._num_players):
+            for coin_idx in range(2):  # 2 coins per player
+                if player_idx < len(self._spawned_on_board) and coin_idx < len(self._spawned_on_board[player_idx]):
+                    # Only position coins that haven't been spawned on the board
+                    if not self._spawned_on_board[player_idx][coin_idx]:
+                        # Ensure position is -1 (not on board)
+                        if player_idx < len(self._positions) and coin_idx < len(self._positions[player_idx]):
+                            self._positions[player_idx][coin_idx] = -1
+                        self._position_coin_near_portrait(player_idx, coin_idx)
 
     def _clamp_to_bounds(self, pos, size):
         layer = self._root_float()
@@ -1261,9 +1311,12 @@ class DiceGameScreen(Screen):
         landing = Animation(center=(target_x, target_y), d=duration * 0.55, t="in_quad")
         (ascent + landing).start(coin)
 
-    def _move_coin_to_box(self, idx: int, pos: int, reverse=False, stepwise=False, start_pos=None):
+    def _move_coin_to_box(self, player_idx: int, coin_idx: int, pos: int, reverse=False, stepwise=False,
+                          start_pos=None):
         box = self.ids.get(f"box_{pos}")
-        coin = self._coins[idx] if idx < len(self._coins) else None
+        if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
+            return
+        coin = self._coins[player_idx][coin_idx]
         if not box or not coin or coin.parent is None:
             return
 
@@ -1276,37 +1329,39 @@ class DiceGameScreen(Screen):
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
+        # Offset coins slightly when multiple coins on same box
         offsets = {
-            0: (0, 0),
-            1: (0, 0),
-            2: (0, 0),
+            0: (-dp(8), 0),
+            1: (dp(8), 0),
         }
-        stack_x, stack_y = offsets.get(idx, (0, 0))
+        stack_x, stack_y = offsets.get(coin_idx, (0, 0))
 
         if reverse:
             start_anchor = self.ids.get("box_0")
             if start_anchor:
                 tx, ty = self._map_center_to_parent(layer, start_anchor)
                 self._jump_coin_to(coin, (tx, ty), jump_height=dp(48), duration=0.6)
-                self._positions[idx] = 0
-                self._debug(f"[REVERSE] Player {idx} reset to start box.")
+                self._positions[player_idx][coin_idx] = 0
+                self._debug(f"[REVERSE] Player {player_idx} coin {coin_idx} reset to start box.")
             else:
                 self._debug("[WARN] box_0 missing; reverse skipped.")
             return
         if stepwise:
             if start_pos is None:
-                start_pos = self._positions[idx]
+                start_pos = self._positions[player_idx][coin_idx]
             if isinstance(start_pos, int) and isinstance(pos, int) and start_pos != pos:
                 direction = 1 if pos > start_pos else -1
                 path = list(range(start_pos + direction, pos + direction, direction))
-                self._animate_coin_path(idx, path, jump_height=dp(26), duration=0.22)
+                self._animate_coin_path(player_idx, coin_idx, path, jump_height=dp(26), duration=0.22)
                 return
 
-        self._move_coin_to_box_direct(idx, pos)
+        self._move_coin_to_box_direct(player_idx, coin_idx, pos)
 
-    def _move_coin_to_box_direct(self, idx: int, pos: int, jump_height=dp(32), duration=0.55):
+    def _move_coin_to_box_direct(self, player_idx: int, coin_idx: int, pos: int, jump_height=dp(32), duration=0.55):
         box = self.ids.get(f"box_{pos}")
-        coin = self._coins[idx] if idx < len(self._coins) else None
+        if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
+            return
+        coin = self._coins[player_idx][coin_idx]
         if not box or not coin or coin.parent is None:
             return
 
@@ -1316,12 +1371,12 @@ class DiceGameScreen(Screen):
         size_px = max(dp(34), min(dp(56), h * 0.9))
         if self._num_players == 3:
             size_px = min(size_px, dp(40))
+        # Offset coins slightly when multiple coins on same box
         offsets = {
-            0: (0, 0),
-            1: (0, 0),
-            2: (0, 0),
+            0: (-dp(8), 0),
+            1: (dp(8), 0),
         }
-        stack_x, stack_y = offsets.get(idx, (0, 0))
+        stack_x, stack_y = offsets.get(coin_idx, (0, 0))
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
@@ -1329,10 +1384,10 @@ class DiceGameScreen(Screen):
         target = (tx + stack_x, ty + stack_y)
         safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
         self._jump_coin_to(coin, (safe_x, safe_y), jump_height=jump_height, duration=duration)
-        self._positions[idx] = pos
-        self._debug(f"[MOVE] Player {idx} now at {pos}")
+        self._positions[player_idx][coin_idx] = pos
+        self._debug(f"[MOVE] Player {player_idx} coin {coin_idx} now at {pos}")
 
-    def _animate_coin_path(self, idx: int, path, jump_height=dp(26), duration=0.22):
+    def _animate_coin_path(self, player_idx: int, coin_idx: int, path, jump_height=dp(26), duration=0.22):
         if not path:
             return
 
@@ -1342,18 +1397,44 @@ class DiceGameScreen(Screen):
             if not steps:
                 return
             next_box = steps.pop(0)
-            self._move_coin_to_box_direct(idx, next_box, jump_height=jump_height, duration=duration)
+            self._move_coin_to_box_direct(player_idx, coin_idx, next_box, jump_height=jump_height, duration=duration)
             if steps:
                 Clock.schedule_once(_step, duration * 1.05)
 
         _step()
 
     def _apply_positions_to_board(self, positions, reverse=False):
+        """Apply positions from backend. positions can be flat list or nested list."""
         self._ensure_coin_widgets()
         self._num_players = 3 if (len(positions) >= 3 and self.player3_name) else 2
-        for idx in range(self._num_players):
-            self._positions[idx] = int(positions[idx])
-            self._move_coin_to_box(idx, int(positions[idx]), reverse=False)
+
+        # Handle both flat and nested position formats
+        for player_idx in range(self._num_players):
+            if player_idx < len(positions):
+                pos_val = positions[player_idx]
+                # If nested (list of 2 positions), use it directly
+                if isinstance(pos_val, (list, tuple)) and len(pos_val) >= 2:
+                    for coin_idx in range(2):
+                        self._positions[player_idx][coin_idx] = int(pos_val[coin_idx])
+                        if self._positions[player_idx][coin_idx] >= 0:
+                            self._spawned_on_board[player_idx][coin_idx] = True
+                            self._move_coin_to_box(player_idx, coin_idx, int(pos_val[coin_idx]), reverse=False)
+                        else:
+                            self._spawned_on_board[player_idx][coin_idx] = False
+                            self._position_coin_near_portrait(player_idx, coin_idx)
+                else:
+                    # Flat format: single position per player (legacy)
+                    pos = int(pos_val) if pos_val is not None else -1
+                    self._positions[player_idx][0] = pos
+                    self._positions[player_idx][1] = -1
+                    if pos >= 0:
+                        self._spawned_on_board[player_idx][0] = True
+                        self._move_coin_to_box(player_idx, 0, pos, reverse=False)
+                    else:
+                        self._spawned_on_board[player_idx][0] = False
+                        self._position_coin_near_portrait(player_idx, 0)
+                    self._spawned_on_board[player_idx][1] = False
+                    self._position_coin_near_portrait(player_idx, 1)
 
     # ---------- ONLINE sync ----------
     def _start_online_sync(self):
@@ -1419,10 +1500,10 @@ class DiceGameScreen(Screen):
 
     def _schedule_online_recovery(self):
         if (
-            self._connection_recover_ev
-            or not self._online
-            or not self.match_id
-            or not self._game_active
+                self._connection_recover_ev
+                or not self._online
+                or not self.match_id
+                or not self._game_active
         ):
             return
         self._debug("[SYNC] Scheduling connection recovery after heartbeat failures.")
@@ -1643,12 +1724,25 @@ class DiceGameScreen(Screen):
             # 5. Spawn handler
             # =====================================================================
             if spawn and actor is not None:
-                self._debug(f"[SPAWN] Player {actor} enters board at 0")
-                self._spawned_on_board[actor] = True
-                self._move_coin_to_box(actor, 0)
+                actor_idx = int(actor)
+                # Find first unspawned coin for this player
+                coin_idx = None
+                for cidx in range(2):
+                    if actor_idx < len(self._spawned_on_board) and cidx < len(self._spawned_on_board[actor_idx]):
+                        if not self._spawned_on_board[actor_idx][cidx]:
+                            coin_idx = cidx
+                            break
+                if coin_idx is None:
+                    coin_idx = 0  # Default to first coin
+
+                self._debug(f"[SPAWN] Player {actor_idx} coin {coin_idx} enters board at 0")
+                if actor_idx < len(self._spawned_on_board) and coin_idx < len(self._spawned_on_board[actor_idx]):
+                    self._spawned_on_board[actor_idx][coin_idx] = True
+                    self._positions[actor_idx][coin_idx] = 0
+                    self._move_coin_to_box(actor_idx, coin_idx, 0)
 
                 # Turn update
-                self._current_player = int(turn) if turn is not None else (actor + 1) % self._num_players
+                self._current_player = int(turn) if turn is not None else (actor_idx + 1) % self._num_players
                 self._debug(f"[TURN][SPAWN] → player {self._current_player}")
 
                 Clock.schedule_once(lambda dt: self._unlock_and_continue(), 0.6)
@@ -1657,14 +1751,27 @@ class DiceGameScreen(Screen):
             # =====================================================================
             # 6. Move handling
             # =====================================================================
-            old_positions = self._positions[:]
+            # Handle positions - can be flat or nested
+            old_positions = [list(p) for p in self._positions]  # Deep copy
             parsed_positions = []
             for val in positions:
-                try:
-                    parsed_positions.append(int(val))
-                except Exception:
-                    parsed_positions.append(0)
-            self._positions = parsed_positions[:]
+                if isinstance(val, (list, tuple)) and len(val) >= 2:
+                    # Nested format: [pos_coin0, pos_coin1]
+                    parsed_positions.append([int(val[0]) if val[0] is not None else -1,
+                                             int(val[1]) if val[1] is not None else -1])
+                else:
+                    # Flat format: single position (legacy)
+                    try:
+                        pos = int(val) if val is not None else -1
+                        parsed_positions.append([pos, -1])
+                    except Exception:
+                        parsed_positions.append([-1, -1])
+
+            # Ensure we have enough entries
+            while len(parsed_positions) < 3:
+                parsed_positions.append([-1, -1])
+
+            self._positions = parsed_positions[:3]  # Keep only first 3 players
             self._ensure_coin_widgets()
 
             try:
@@ -1676,23 +1783,46 @@ class DiceGameScreen(Screen):
             except Exception:
                 roll_val = None
 
-            for i, (a, b) in enumerate(zip(old_positions, parsed_positions)):
-                if a == b:
-                    continue
-                stepwise = (
-                    actor_idx is not None
-                    and actor_idx == i
-                    and roll_val is not None
-                    and roll_val > 1
-                    and isinstance(a, int)
-                    and isinstance(b, int)
-                    and b > a
-                )
-                if stepwise:
-                    self._move_coin_to_box(i, b, stepwise=True, start_pos=a)
-                else:
-                    self._move_coin_to_box(i, b)
-                    self._debug(f"[MOVE] Player {i}: {a} → {b}")
+            # Update coin positions
+            for player_idx in range(min(self._num_players, len(parsed_positions))):
+                old_pos = old_positions[player_idx] if player_idx < len(old_positions) else [-1, -1]
+                new_pos = parsed_positions[player_idx]
+
+                for coin_idx in range(2):
+                    old_p = old_pos[coin_idx] if coin_idx < len(old_pos) else -1
+                    new_p = new_pos[coin_idx] if coin_idx < len(new_pos) else -1
+
+                    if old_p == new_p:
+                        continue
+
+                    # Update spawned status
+                    if new_p >= 0:
+                        if player_idx < len(self._spawned_on_board) and coin_idx < len(
+                                self._spawned_on_board[player_idx]):
+                            self._spawned_on_board[player_idx][coin_idx] = True
+                    else:
+                        if player_idx < len(self._spawned_on_board) and coin_idx < len(
+                                self._spawned_on_board[player_idx]):
+                            self._spawned_on_board[player_idx][coin_idx] = False
+                            self._position_coin_near_portrait(player_idx, coin_idx)
+
+                    if new_p < 0:
+                        continue
+
+                    stepwise = (
+                            actor_idx is not None
+                            and actor_idx == player_idx
+                            and roll_val is not None
+                            and roll_val > 1
+                            and isinstance(old_p, int)
+                            and isinstance(new_p, int)
+                            and new_p > old_p
+                    )
+                    if stepwise:
+                        self._move_coin_to_box(player_idx, coin_idx, new_p, stepwise=True, start_pos=old_p)
+                    else:
+                        self._move_coin_to_box(player_idx, coin_idx, new_p)
+                    self._debug(f"[MOVE] Player {player_idx} coin {coin_idx}: {old_p} → {new_p}")
 
             # =====================================================================
             # 7. FORFEIT HANDLING
@@ -1706,8 +1836,10 @@ class DiceGameScreen(Screen):
                 # Hide UI
                 if f"p{forfeit_actor + 1}_pic" in self.ids:
                     self.ids[f"p{forfeit_actor + 1}_pic"].opacity = 0
-                if forfeit_actor < len(self._coins) and self._coins[forfeit_actor]:
-                    self._coins[forfeit_actor].opacity = 0
+                if forfeit_actor < len(self._coins):
+                    for coin in self._coins[forfeit_actor]:
+                        if coin:
+                            coin.opacity = 0
 
                 self._debug(f"[FORFEIT] Player {forfeit_actor} removed")
                 self._show_temp_popup(f"Player {forfeit_actor + 1} gave up!", duration=2)
@@ -1895,7 +2027,7 @@ class DiceGameScreen(Screen):
         pids = storage.get_player_ids() if storage else [None, None, None]
         names = [self.player1_name, self.player2_name, self.player3_name]
         pid = pids[idx] if idx < len(pids) else None
-        name = names[idx] if idx < len(names) else f"Player {idx+1}"
+        name = names[idx] if idx < len(names) else f"Player {idx + 1}"
         balance = self._resolve_player_wallet(idx)
         desc = self._resolve_player_description(idx, name)
         self._open_player_popup(name, balance, self._resolve_avatar_source(idx, name, pid), desc)
@@ -1968,3 +2100,4 @@ class DiceGameScreen(Screen):
     # ---------- deprecated animator ----------
     def _animate_diff(self, old_positions, new_positions, reverse=False, actor=None, roll=None, spawn=False):
         self._debug("[ANIM] Deprecated _animate_diff() called — using unified _on_server_event flow.")
+
