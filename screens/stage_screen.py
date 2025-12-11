@@ -119,6 +119,12 @@ class StageScreen(Screen):
         app = App.get_running_app()
         selected_mode = getattr(app, "selected_mode", 2)
 
+        if storage and hasattr(storage, "set_stakes_cache"):
+            try:
+                storage.set_stakes_cache(stakes)
+            except Exception:
+                pass
+
         for stake in stakes:
             players = int(stake.get("players", 2))
             if players != int(selected_mode):

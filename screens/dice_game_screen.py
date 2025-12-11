@@ -2257,7 +2257,9 @@ class DiceGameScreen(Screen):
             except Exception as e:
                 self._debug(f"[BOT][DICE][ERR] {e}")
 
-            forced_coin = self._auto_choose_coin(current)
+            forced_coin = self._auto_coin_for_roll(current, roll)
+            if forced_coin is None:
+                forced_coin = self._auto_choose_coin(current)
             Clock.schedule_once(
                 lambda dt, idx=forced_coin, who=current: self._apply_roll(roll, forced_coin_idx=idx, player_idx=who),
                 0.75,

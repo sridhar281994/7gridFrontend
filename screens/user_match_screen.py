@@ -68,6 +68,11 @@ class UserMatchScreen(Screen):
     _last_poll_data = {}
     _popup_timer = None  # kept for safety but NOT USED anymore
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._back_button = None
+        Clock.schedule_once(self._ensure_back_button, 0)
+
     # -------------------------
     # Lifecycle
     # -------------------------
@@ -75,6 +80,7 @@ class UserMatchScreen(Screen):
         if not self._rotate_event:
             self._rotate_event = Clock.schedule_interval(self._rotate_tick, 1 / 60.0)
         Clock.schedule_once(lambda dt: self._apply_pulse_anims(), 0)
+        self._ensure_back_button()
 
     def on_leave(self, *_):
         if self._rotate_event:
@@ -103,6 +109,40 @@ class UserMatchScreen(Screen):
             self.p2_angle = (self.p2_angle + delta_deg) % 360
         if self.selected_mode == 3 and self._p3_rotating:
             self.p3_angle = (self.p3_angle + delta_deg) % 360
+
+    def _ensure_back_button(self, *_):
+        if self._back_button:
+            return
+        btn = Button(
+            text="Back",
+            size_hint=(None, None),
+            size=(dp(90), dp(38)),
+            pos_hint={"x": 0.02, "y": 0.02},
+            background_color=(0.2, 0.2, 0.2, 0.85),
+            color=(1, 1, 1, 1),
+        )
+        btn.bind(on_release=self.go_back_to_stage)
+        self.add_widget(btn)
+        self._back_button = btn
+
+    def go_back_to_stage(self, *_):
+        self._stop_polling = True
+        if self._poll_event:
+            try:
+                self._poll_event.cancel()
+            except Exception:
+                pass
+            self._poll_event = None
+        self._stop_pulse_anims()
+        self._p2_rotating = False
+        self._p3_rotating = False
+        if storage and hasattr(storage, "set_current_match"):
+            try:
+                storage.set_current_match(None)
+            except Exception:
+                pass
+        if self.manager:
+            self.manager.current = "stage"
 
     # -------------------------
     # Start matchmaking

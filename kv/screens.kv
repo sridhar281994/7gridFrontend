@@ -729,6 +729,15 @@
                     on_release: root.show_wallet_history()
 
                 Button:
+                    text: "Ask Friend To Join"
+                    size_hint_y: None
+                    height: dp(40)
+                    font_size: "15sp"
+                    background_color: (0.3, 0.4, 0.9, 1)
+                    color: (1, 1, 1, 1)
+                    on_release: root.open_invite_dialog()
+
+                Button:
                     text: "Save Settings"
                     size_hint_y: None
                     height: dp(40)

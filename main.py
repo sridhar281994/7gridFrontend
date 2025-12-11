@@ -10,6 +10,7 @@ from screens.stage_screen import StageScreen
 from screens.dice_game_screen import DiceGameScreen
 from screens.forgot_password_screen import ForgotPasswordScreen
 from screens.reset_password_screen import ResetPasswordScreen
+from urllib.parse import urlparse, parse_qs
 
 # Optional: only if you later add a UserMatchScreen
 try:
@@ -80,6 +81,41 @@ class DiceApp(App):
             anim2.start(screen.ids.star2)
         except Exception as e:
             print(f"[Animation Error] {e}")
+
+    def handle_invite_link(self, link: str) -> bool:
+        """Parse a dice://join link and jump straight into the lobby."""
+        try:
+            parsed = urlparse(link)
+            params = parse_qs(parsed.query)
+            stake = int(params.get("stake", [0])[0])
+            players = int(params.get("players", [2])[0])
+        except Exception:
+            return False
+
+        if stake <= 0:
+            return False
+
+        self.selected_stake = stake
+        self.selected_mode = players
+        if storage:
+            try:
+                storage.set_stake_amount(stake)
+                storage.set_num_players(players)
+            except Exception:
+                pass
+
+        local_name = "Player"
+        if self.sm.has_screen("stage"):
+            stage_screen = self.sm.get_screen("stage")
+            if hasattr(stage_screen, "_current_player_name"):
+                local_name = stage_screen._current_player_name()
+
+        if self.sm.has_screen("usermatch") and UserMatchScreen is not None:
+            match_screen = self.sm.get_screen("usermatch")
+            match_screen.start_matchmaking(local_player_name=local_name, amount=stake, mode=players)
+            self.sm.current = "usermatch"
+            return True
+        return False
 
 
 if __name__ == '__main__':
