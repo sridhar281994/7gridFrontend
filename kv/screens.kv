@@ -1347,16 +1347,16 @@
                 spacing: dp(4)
                 canvas.before:
                     Color:
-                        rgba: 0.05, 0.08, 0.16, 0.92
-                    RoundedRectangle:
+                        rgba: 0.98, 0.55, 0.18, 0.92
+                    Ellipse:
                         pos: self.pos
                         size: self.size
-                        radius: [dp(12)]
                 canvas.after:
                     Color:
-                        rgba: 1, 1, 1, 0.09
+                        rgba: 1, 1, 1, 0.18
                     Line:
-                        rounded_rectangle: (self.x, self.y, self.width, self.height, dp(12))
+                        ellipse: (self.x, self.y, self.width, self.height)
+                        width: 1.2
 
                 Label:
                     text: "[b]Quick Chat[/b]"
@@ -1407,53 +1407,53 @@
                     height: dp(28) * 3
                     spacing: dp(3)
                     Button:
-                        text: ":)"
+                        text: "🙂"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.24, 0.52, 0.9, 0.95)
+                        background_color: (1, 0.72, 0.3, 0.95)
                         color: (1, 1, 1, 1)
-                        on_release: root.send_chat_message(":)")
+                        on_release: root.send_chat_message("🙂")
                     Button:
-                        text: "B)"
+                        text: "😎"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.45, 0.7, 0.2, 0.95)
+                        background_color: (1, 0.6, 0.2, 0.95)
                         color: (1, 1, 1, 1)
-                        on_release: root.send_chat_message("B)")
+                        on_release: root.send_chat_message("😎")
                     Button:
-                        text: ">:("
+                        text: "😠"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.85, 0.35, 0.2, 0.95)
+                        background_color: (1, 0.42, 0.2, 0.95)
                         color: (1, 1, 1, 1)
-                        on_release: root.send_chat_message(">:(")
+                        on_release: root.send_chat_message("😠")
                     Button:
-                        text: ":'("
+                        text: "😢"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.62, 0.35, 0.85, 0.95)
+                        background_color: (0.98, 0.5, 0.5, 0.95)
                         color: (1, 1, 1, 1)
-                        on_release: root.send_chat_message(":'(")
+                        on_release: root.send_chat_message("😢")
                     Button:
-                        text: "GG!"
+                        text: "👏"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.95, 0.75, 0.18, 0.95)
+                        background_color: (1, 0.78, 0.2, 0.95)
                         color: (0.16, 0.08, 0.02, 1)
-                        on_release: root.send_chat_message("GG!")
+                        on_release: root.send_chat_message("👏")
                     Button:
-                        text: "Nice!"
+                        text: "🔥"
                         font_size: sp(13)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.16, 0.75, 0.68, 0.95)
+                        background_color: (1, 0.45, 0.15, 0.95)
                         color: (0.02, 0.09, 0.12, 1)
-                        on_release: root.send_chat_message("Nice!")
+                        on_release: root.send_chat_message("🔥")
 
                 BoxLayout:
                     size_hint_y: None
@@ -1483,14 +1483,14 @@
 
             Button:
                 id: chat_toggle
-                text: "✉ Hide" if root.chat_open else "✉ Chat"
+                text: "💬 Hide" if root.chat_open else "💬 Chat"
                 size_hint: None, None
                 size: dp(94), dp(36)
                 pos_hint: {"x": 0, "y": 0.78}
                 font_size: sp(16)
                 background_normal: ""
                 background_down: ""
-                background_color: (0.2, 0.62, 1, 0.95) if root.chat_open else (0.08, 0.08, 0.12, 0.85)
+                background_color: (1, 0.58, 0.18, 0.98) if root.chat_open else (1, 0.48, 0.12, 0.88)
                 color: 1, 1, 1, 1
                 on_release: root.toggle_chat_dropdown()
 
