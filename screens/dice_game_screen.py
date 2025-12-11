@@ -235,6 +235,7 @@ class DiceGameScreen(Screen):
         self._winner_shown = False
         self._num_players = 2
         self._selected_coin = None
+        self._pending_roll = None
 
         # online sync
         self._online = False
@@ -368,11 +369,20 @@ class DiceGameScreen(Screen):
         return coin_idx
 
     def _requires_local_selection(self) -> bool:
-        if not self._game_active:
+        if not self._game_active or not self._online:
             return False
-        if self._online:
-            return self._my_index is not None and self._current_player == self._my_index
-        return self._current_player == 0
+        return self._my_index is not None and self._current_player == self._my_index
+
+    def _pending_roll_value_for(self, player_idx: int | None):
+        pending = getattr(self, "_pending_roll", None)
+        if not pending or player_idx is None:
+            return None
+        try:
+            if int(pending.get("player")) == int(player_idx):
+                return int(pending.get("value"))
+        except Exception:
+            return None
+        return None
 
     def _on_coin_pressed(self, player_idx, coin_idx, *_):
         if not self._game_active:
@@ -385,6 +395,20 @@ class DiceGameScreen(Screen):
             return
         if not self._is_coin_selectable(player_idx, coin_idx, show_toast=True):
             return
+
+        if not self._online:
+            pending_value = self._pending_roll_value_for(player_idx)
+            if pending_value is not None:
+                self._debug(
+                    f"[OFFLINE] Applying pending roll {pending_value} to player {player_idx} coin {coin_idx}"
+                )
+                self._pending_roll = None
+                self._selected_coin = None
+                self._update_coin_selection_visuals()
+                self._apply_roll(pending_value, forced_coin_idx=coin_idx, player_idx=player_idx)
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
+                return
+
         self._selected_coin = (player_idx, coin_idx)
         self._update_coin_selection_visuals()
 
@@ -599,11 +623,13 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
+        self._pending_roll = None
         self._clear_finished_markers()
         self._coins_finished = [0, 0, 0]
         self.chat_open = False
         self._hide_chat_bubble(instant=True)
         self._clear_coin_selection()
+        self._pending_roll = None
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -838,7 +864,7 @@ class DiceGameScreen(Screen):
         self._cancel_turn_timer()
 
         selected_coin_idx = None
-        if self._requires_local_selection():
+        if self._online and self._requires_local_selection():
             selected_coin_idx = self._resolve_selected_coin_index(show_toast=True)
             if selected_coin_idx is None:
                 return
@@ -858,8 +884,10 @@ class DiceGameScreen(Screen):
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
-            Clock.schedule_once(lambda dt, idx=selected_coin_idx: self._apply_roll(roll, forced_coin_idx=idx), 0.75)
-            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
+            self._pending_roll = {"player": self._current_player, "value": roll}
+            self._debug(
+                f"[OFFLINE] Stored pending roll {roll} for player {self._current_player} awaiting coin selection"
+            )
             return
 
         # ONLINE
@@ -1121,6 +1149,7 @@ class DiceGameScreen(Screen):
         self._end_turn_pending = True
 
         self._roll_locked = False
+        self._pending_roll = None
         self._clear_coin_selection()
         self._current_player = (self._current_player + 1) % self._num_players
         self._debug(f"[TURN] Switching → player {self._current_player}")
