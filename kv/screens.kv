@@ -729,6 +729,15 @@
                     on_release: root.show_wallet_history()
 
                 Button:
+                    text: "Ask Friend To Join"
+                    size_hint_y: None
+                    height: dp(40)
+                    font_size: "15sp"
+                    background_color: (0.3, 0.4, 0.9, 1)
+                    color: (1, 1, 1, 1)
+                    on_release: root.open_invite_dialog()
+
+                Button:
                     text: "Save Settings"
                     size_hint_y: None
                     height: dp(40)
@@ -1364,7 +1373,7 @@
                     size_hint_y: None
                     height: dp(24)
                     font_size: sp(13)
-                    color: 1, 1, 1, 1
+                    color: 0.85, 0.32, 0.08, 1
 
                 Widget:
                     size_hint_y: None
@@ -1396,7 +1405,7 @@
                         text_size: self.width - dp(8), None
                         halign: "left"
                         valign: "top"
-                        color: 1, 1, 1, 1
+                        color: 0.85, 0.32, 0.08, 1
                         font_size: sp(12)
                         height: max(self.texture_size[1], dp(8))
                         padding: [dp(4), dp(4)]
@@ -1412,7 +1421,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.24, 0.52, 0.9, 0.95)
-                        color: (1, 1, 1, 1)
+                        color: 0.85, 0.32, 0.08, 1
                         on_release: root.send_chat_message(":)")
                     Button:
                         text: "B)"
@@ -1420,7 +1429,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.45, 0.7, 0.2, 0.95)
-                        color: (1, 1, 1, 1)
+                        color: 0.85, 0.32, 0.08, 1
                         on_release: root.send_chat_message("B)")
                     Button:
                         text: ">:("
@@ -1428,7 +1437,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.85, 0.35, 0.2, 0.95)
-                        color: (1, 1, 1, 1)
+                        color: 0.85, 0.32, 0.08, 1
                         on_release: root.send_chat_message(">:(")
                     Button:
                         text: ":'("
@@ -1436,7 +1445,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.62, 0.35, 0.85, 0.95)
-                        color: (1, 1, 1, 1)
+                        color: 0.85, 0.32, 0.08, 1
                         on_release: root.send_chat_message(":'(")
                     Button:
                         text: "GG!"
@@ -1444,7 +1453,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.95, 0.75, 0.18, 0.95)
-                        color: (0.16, 0.08, 0.02, 1)
+                        color: 0.75, 0.28, 0.05, 1
                         on_release: root.send_chat_message("GG!")
                     Button:
                         text: "Nice!"
@@ -1452,7 +1461,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.16, 0.75, 0.68, 0.95)
-                        color: (0.02, 0.09, 0.12, 1)
+                        color: 0.75, 0.28, 0.05, 1
                         on_release: root.send_chat_message("Nice!")
 
                 BoxLayout:
@@ -1468,7 +1477,7 @@
                         size_hint_x: None
                         width: dp(62)
                         background_color: (1, 1, 1, 0.92)
-                        foreground_color: (0, 0, 0, 1)
+                        foreground_color: (0.85, 0.32, 0.08, 1)
                         padding: [dp(4), dp(2), dp(4), dp(2)]
                     Button:
                         text: "Send"
@@ -1478,7 +1487,7 @@
                         background_normal: ""
                         background_down: ""
                         background_color: (0.3, 0.65, 1, 1)
-                        color: (1, 1, 1, 1)
+                        color: 0.85, 0.32, 0.08, 1
                         on_release: root.send_chat_message()
 
             Button:
@@ -1491,7 +1500,7 @@
                 background_normal: ""
                 background_down: ""
                 background_color: (0.2, 0.62, 1, 0.95) if root.chat_open else (0.08, 0.08, 0.12, 0.85)
-                color: 1, 1, 1, 1
+                color: 0.85, 0.32, 0.08, 1
                 on_release: root.toggle_chat_dropdown()
 
         # Exit button

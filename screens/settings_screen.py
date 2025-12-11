@@ -8,10 +8,15 @@ from kivy.clock import Clock
 from kivy.uix.filechooser import FileChooserIconView
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
+from kivy.uix.spinner import Spinner
+from kivy.core.clipboard import Clipboard
 from kivy.metrics import dp
 from kivy.core.window import Window
+from kivy.app import App
 import requests
 import os
+from urllib.parse import urlencode
+from collections import OrderedDict
 
 from screens.settings_wallet import WalletActionsMixin
 try:
@@ -82,6 +87,184 @@ class SettingsScreen(WalletActionsMixin, Screen):
         else:
             self.sound.play()
             self.music_playing = True
+
+    # ------------------ Invites ------------------
+    def open_invite_dialog(self):
+        token, backend = self._require_auth()
+        if not (token and backend):
+            return
+
+        cache = []
+        if storage and hasattr(storage, "get_stakes_cache"):
+            try:
+                cache = storage.get_stakes_cache() or []
+            except Exception:
+                cache = []
+
+        if cache:
+            self._show_invite_stage_popup(cache)
+            return
+
+        def worker():
+            try:
+                resp = requests.get(
+                    f"{backend}/game/stakes",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                    verify=False,
+                )
+                resp.raise_for_status()
+                stakes = resp.json() or []
+                if storage and hasattr(storage, "set_stakes_cache"):
+                    try:
+                        storage.set_stakes_cache(stakes)
+                    except Exception:
+                        pass
+                Clock.schedule_once(lambda dt: self._show_invite_stage_popup(stakes), 0)
+            except Exception as err:
+                Clock.schedule_once(
+                    lambda dt, msg=str(err): self.show_popup("Invite", "Load failed", msg),
+                    0,
+                )
+
+        self._run_async(worker)
+
+    def _stage_choices_for_mode(self, stakes, mode: int):
+        choices = []
+        for stake in stakes or []:
+            try:
+                players = int(stake.get("players", 2))
+            except Exception:
+                players = 2
+            if players != mode:
+                continue
+            amount = stake.get("stake_amount", 0) or 0
+            try:
+                amount = int(amount)
+            except Exception:
+                amount = 0
+            label = stake.get("label") or f"₹{amount}"
+            display = f"{label} • ₹{amount}"
+            choices.append((display, {"amount": amount, "label": label, "players": mode}))
+        return choices
+
+    def _show_invite_stage_popup(self, stakes):
+        if not stakes:
+            self.show_popup("Invite", "No stages available")
+            return
+
+        info_lbl = Label(
+            text="Pick how many players and which stage you want to host.\nWe'll generate an invite link to share.",
+            halign="center",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(70),
+        )
+        info_lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+
+        players_spinner = Spinner(
+            text="2 Players",
+            values=("2 Players", "3 Players"),
+            size_hint_y=None,
+            height=dp(42),
+        )
+        stage_spinner = Spinner(
+            text="Select Stage",
+            values=(),
+            size_hint_y=None,
+            height=dp(42),
+        )
+
+        layout = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(16))
+        layout.add_widget(info_lbl)
+        layout.add_widget(players_spinner)
+        layout.add_widget(stage_spinner)
+
+        btn_row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        share_btn = Button(text="Share Link", background_color=(0.2, 0.6, 1, 1), color=(1, 1, 1, 1))
+        cancel_btn = Button(text="Cancel", background_color=(0.6, 0.2, 0.2, 1), color=(1, 1, 1, 1))
+        btn_row.add_widget(share_btn)
+        btn_row.add_widget(cancel_btn)
+        layout.add_widget(btn_row)
+
+        popup = Popup(title="Ask Friend To Join", content=layout, size_hint=(0.88, None), height=dp(360))
+
+        def refresh_stage_values(*_):
+            mode = 3 if "3" in players_spinner.text else 2
+            choices = self._stage_choices_for_mode(stakes, mode)
+            labels = [label for label, _ in choices]
+            stage_spinner.values = tuple(labels) if labels else ()
+            stage_spinner._stage_map = OrderedDict(choices)
+            stage_spinner.text = labels[0] if labels else "No stage"
+
+        def do_share(_):
+            stage_map = getattr(stage_spinner, "_stage_map", {})
+            selection = stage_spinner.text
+            meta = stage_map.get(selection)
+            if not meta:
+                self.show_popup("Invite", "Pick a stage")
+                return
+            popup.dismiss()
+            self._share_invite_link(meta["amount"], meta["label"], meta["players"])
+
+        players_spinner.bind(text=refresh_stage_values)
+        refresh_stage_values()
+        share_btn.bind(on_release=do_share)
+        cancel_btn.bind(on_release=lambda *_: popup.dismiss())
+        popup.open()
+
+    def _share_invite_link(self, stake_amount: int, stage_label: str, num_players: int):
+        link = f"dice://join?{urlencode({'stake': stake_amount, 'players': num_players})}"
+        instruction = Label(
+            text=f"Share this link with your friend to open a {num_players}-player lobby on '{stage_label}'.",
+            halign="center",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(70),
+        )
+        instruction.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+
+        link_input = TextInput(
+            text=link,
+            readonly=True,
+            size_hint_y=None,
+            height=dp(44),
+            multiline=False,
+        )
+
+        buttons = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        copy_btn = Button(text="Copy Link", background_color=(0.2, 0.6, 1, 1), color=(1, 1, 1, 1))
+        open_btn = Button(text="Open Link Now", background_color=(0.1, 0.5, 0.3, 1), color=(1, 1, 1, 1))
+        close_btn = Button(text="Close", background_color=(0.6, 0.2, 0.2, 1), color=(1, 1, 1, 1))
+        buttons.add_widget(copy_btn)
+        buttons.add_widget(open_btn)
+        buttons.add_widget(close_btn)
+
+        layout = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(16))
+        layout.add_widget(instruction)
+        layout.add_widget(link_input)
+        layout.add_widget(buttons)
+
+        popup = Popup(title="Invite Link", content=layout, size_hint=(0.88, None), height=dp(260))
+
+        def copy_link(_):
+            try:
+                Clipboard.copy(link)
+                self.show_popup("Invite", "Link copied", duration=1.5)
+            except Exception as err:
+                self.show_popup("Invite", "Copy failed", str(err))
+
+        def open_link(_):
+            app = App.get_running_app()
+            if hasattr(app, "handle_invite_link"):
+                handled = app.handle_invite_link(link)
+                if not handled:
+                    self.show_popup("Invite", "Unable to open link")
+
+        copy_btn.bind(on_release=copy_link)
+        open_btn.bind(on_release=open_link)
+        close_btn.bind(on_release=lambda *_: popup.dismiss())
+        popup.open()
 
     # ------------------ Profile ------------------
     def change_profile_picture(self):

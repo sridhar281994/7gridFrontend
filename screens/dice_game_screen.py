@@ -4,6 +4,7 @@ import random
 import requests
 import threading
 import time
+from functools import partial
 
 from kivy.uix.screenmanager import Screen
 from kivy.uix.image import Image
@@ -120,6 +121,36 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
             self._rot.angle = float(self.rotation_angle)
 
 
+class SelectableCoin(ButtonBehavior, Image):
+    """Clickable coin widget that can toggle a subtle glow when selected."""
+
+    player_index = NumericProperty(0)
+    coin_index = NumericProperty(0)
+    selected = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("allow_stretch", True)
+        kwargs.setdefault("keep_ratio", True)
+        super().__init__(**kwargs)
+        self.color = (1, 1, 1, 1)
+        with self.canvas.after:
+            self._selection_color = Color(1.0, 0.8, 0.25, 0)
+            self._selection_ring = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(18)])
+        self.bind(pos=self._update_selection_ring, size=self._update_selection_ring)
+
+    def _update_selection_ring(self, *_):
+        if not hasattr(self, "_selection_ring") or self._selection_ring is None:
+            return
+        pad = dp(4)
+        self._selection_ring.pos = (self.x - pad, self.y - pad)
+        self._selection_ring.size = (self.width + pad * 2, self.height + pad * 2)
+
+    def on_selected(self, *_):
+        if hasattr(self, "_selection_color") and self._selection_color:
+            self._selection_color.a = 0.9 if self.selected else 0
+        self.color = (1, 0.92, 0.72, 1) if self.selected else (1, 1, 1, 1)
+
+
 # register for KV
 Factory.register("PolygonDice", cls=PolygonDice)
 
@@ -149,8 +180,8 @@ class ChatBubble(Label):
         self.padding = (dp(14), dp(10))
         self.text_size = (None, None)
         with self.canvas.before:
-            Color(0.08, 0.08, 0.14, 0.88)
-            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(16)])
+            Color(0.98, 0.58, 0.18, 0.92)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
         self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
 
     def _sync_size(self, *_):
@@ -203,6 +234,8 @@ class DiceGameScreen(Screen):
         self._finished_markers = [[], [], []]
         self._winner_shown = False
         self._num_players = 2
+        self._selected_coin = None
+        self._pending_roll = None
 
         # online sync
         self._online = False
@@ -279,6 +312,158 @@ class DiceGameScreen(Screen):
             coin_offset = dp(10) if coin_idx == 1 else -dp(10)
             return (base_x + coin_offset, base_y - dp(6) if coin_idx == 1 else base_y)
 
+    def _local_player_index(self):
+        return self._my_index if self._online else 0
+
+    def _can_control_coin(self, player_idx: int) -> bool:
+        if player_idx is None:
+            return False
+        if self._online:
+            return self._my_index is not None and player_idx == self._my_index
+        return player_idx == 0
+
+    def _clear_coin_selection(self):
+        if self._selected_coin is None:
+            return
+        self._selected_coin = None
+        self._update_coin_selection_visuals()
+
+    def _update_coin_selection_visuals(self):
+        for player_idx, player_coins in enumerate(self._coins):
+            if not player_coins:
+                continue
+            for coin_idx, coin in enumerate(player_coins):
+                if coin is None:
+                    continue
+                coin.selected = (self._selected_coin == (player_idx, coin_idx))
+
+    def _validate_selected_coin(self):
+        if not self._selected_coin:
+            return
+        player_idx, coin_idx = self._selected_coin
+        if not self._can_control_coin(player_idx):
+            self._clear_coin_selection()
+            return
+        if player_idx >= len(self._positions) or coin_idx >= len(self._positions[player_idx]):
+            self._clear_coin_selection()
+            return
+        if self._positions[player_idx][coin_idx] == FINAL_BOX_INDEX:
+            self._clear_coin_selection()
+
+    def _resolve_selected_coin_index(self, *, show_toast: bool = False):
+        if not self._selected_coin:
+            if show_toast:
+                self._show_temp_popup("Select a coin to move", duration=1.5)
+            return None
+        player_idx, coin_idx = self._selected_coin
+        if player_idx != self._current_player:
+            if show_toast:
+                self._show_temp_popup("Wait for your turn", duration=1.2)
+            return None
+        if not self._can_control_coin(player_idx):
+            if show_toast:
+                self._show_temp_popup("That's not your coin", duration=1.2)
+            return None
+        if not self._is_coin_selectable(player_idx, coin_idx, show_toast=show_toast):
+            return None
+        return coin_idx
+
+    def _requires_local_selection(self) -> bool:
+        if not self._game_active or not self._online:
+            return False
+        return self._my_index is not None and self._current_player == self._my_index
+
+    def _pending_roll_value_for(self, player_idx: int | None):
+        pending = getattr(self, "_pending_roll", None)
+        if not pending or player_idx is None:
+            return None
+        try:
+            if int(pending.get("player")) == int(player_idx):
+                return int(pending.get("value"))
+        except Exception:
+            return None
+        return None
+
+    def _has_unspawned_coin(self, player_idx: int) -> bool:
+        if player_idx >= len(self._spawned_on_board):
+            return False
+        return any(
+            (not self._spawned_on_board[player_idx][cidx])
+            for cidx in range(min(2, len(self._spawned_on_board[player_idx])))
+        )
+
+    def _movable_coins(self, player_idx: int) -> list[int]:
+        movable = []
+        if player_idx >= len(self._spawned_on_board):
+            return movable
+        for cidx in range(2):
+            try:
+                spawned = self._spawned_on_board[player_idx][cidx]
+                pos = self._positions[player_idx][cidx]
+            except Exception:
+                continue
+            if spawned and isinstance(pos, (int, float)) and 0 <= int(pos) < FINAL_BOX_INDEX:
+                movable.append(cidx)
+        return movable
+
+    def _needs_selection_for_roll(self, player_idx: int, roll: int) -> bool:
+        if roll == 1 and self._has_unspawned_coin(player_idx):
+            return False
+        return len(self._movable_coins(player_idx)) >= 2
+
+    def _auto_coin_for_roll(self, player_idx: int, roll: int) -> int | None:
+        if roll == 1 and self._has_unspawned_coin(player_idx):
+            for cidx in range(2):
+                try:
+                    if not self._spawned_on_board[player_idx][cidx]:
+                        return cidx
+                except Exception:
+                    continue
+        movable = self._movable_coins(player_idx)
+        if len(movable) == 1:
+            return movable[0]
+        if len(movable) == 0:
+            return self._auto_choose_coin(player_idx)
+        return None
+
+    def _on_coin_pressed(self, player_idx, coin_idx, *_):
+        if not self._game_active:
+            return
+        if not self._can_control_coin(player_idx):
+            self._show_temp_popup("You can only select your coins", duration=1.4)
+            return
+        if self._current_player != player_idx:
+            self._show_temp_popup("Wait for your turn", duration=1.2)
+            return
+        if not self._is_coin_selectable(player_idx, coin_idx, show_toast=True):
+            return
+
+        if not self._online:
+            pending_value = self._pending_roll_value_for(player_idx)
+            if pending_value is not None:
+                self._debug(
+                    f"[OFFLINE] Applying pending roll {pending_value} to player {player_idx} coin {coin_idx}"
+                )
+                self._pending_roll = None
+                self._selected_coin = None
+                self._update_coin_selection_visuals()
+                self._apply_roll(pending_value, forced_coin_idx=coin_idx, player_idx=player_idx)
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
+                return
+
+        self._selected_coin = (player_idx, coin_idx)
+        self._update_coin_selection_visuals()
+
+    def _is_coin_selectable(self, player_idx: int, coin_idx: int, *, show_toast: bool = False) -> bool:
+        if player_idx >= len(self._positions) or coin_idx >= len(self._positions[player_idx]):
+            return False
+        pos = self._positions[player_idx][coin_idx]
+        if pos == FINAL_BOX_INDEX:
+            if show_toast:
+                self._show_temp_popup("Coin already safe", duration=1.2)
+            return False
+        return True
+
     def _position_coin_near_portrait(self, player_idx: int, coin_idx: int = None):
         """Position coin(s) near player portrait. If coin_idx is None, position both coins."""
         if coin_idx is not None:
@@ -318,6 +503,7 @@ class DiceGameScreen(Screen):
             for coin_idx in range(2):  # 2 coins per player
                 if not self._spawned_on_board[player_idx][coin_idx]:
                     self._position_coin_near_portrait(player_idx, coin_idx)
+        self._update_coin_selection_visuals()
 
     def _clear_finished_markers(self):
         if not hasattr(self, "_finished_markers") or not self._finished_markers:
@@ -479,10 +665,13 @@ class DiceGameScreen(Screen):
         self._stop_online_sync()
         self._stop_backend_heartbeat()
         self._clear_chat_messages()
+        self._pending_roll = None
         self._clear_finished_markers()
         self._coins_finished = [0, 0, 0]
         self.chat_open = False
         self._hide_chat_bubble(instant=True)
+        self._clear_coin_selection()
+        self._pending_roll = None
 
     # ---------- portraits ----------
     def _resolve_avatar_source(self, index: int, name: str, pid):
@@ -527,6 +716,7 @@ class DiceGameScreen(Screen):
         self._winner_shown = False
         self._game_active = True
         self._clear_chat_messages()
+        self._clear_coin_selection()
         if hasattr(self, "_forfeited_players"):
             self._forfeited_players.clear()
         else:
@@ -715,6 +905,12 @@ class DiceGameScreen(Screen):
         # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
         self._cancel_turn_timer()
 
+        selected_coin_idx = None
+        if self._online and self._requires_local_selection():
+            selected_coin_idx = self._resolve_selected_coin_index(show_toast=True)
+            if selected_coin_idx is None:
+                return
+
         now = time.time()
         if hasattr(self, "_last_roll_time") and now - getattr(self, "_last_roll_time", 0) < 1.5:
             self._debug("[ROLL] Ignoring duplicate roll trigger within 1.5s window.")
@@ -726,12 +922,36 @@ class DiceGameScreen(Screen):
                 self._show_temp_popup("Not your turn!", duration=1.8)
                 return
 
+            player_idx = self._current_player
             self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
-            Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
+
+            needs_selection = self._needs_selection_for_roll(player_idx, roll)
+            coin_choice = self._auto_coin_for_roll(player_idx, roll)
+
+            if not needs_selection:
+                if coin_choice is None:
+                    coin_choice = self._auto_choose_coin(player_idx)
+                self._debug(
+                    f"[OFFLINE] Auto-applying roll {roll} to player {player_idx} coin {coin_choice}"
+                )
+                Clock.schedule_once(
+                    lambda dt, idx=coin_choice: self._apply_roll(roll, forced_coin_idx=idx, player_idx=player_idx),
+                    0.75,
+                )
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
+                return
+
+            self._pending_roll = {"player": player_idx, "value": roll}
+            self._debug(
+                f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
+            )
+            Clock.schedule_once(
+                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
+                0.8,
+            )
             return
 
         # ONLINE
@@ -797,12 +1017,17 @@ class DiceGameScreen(Screen):
         source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
         self._mark_roll_start(source)
 
+        coin_choice = selected_coin_idx
+
         def worker():
             try:
+                body = {"match_id": self.match_id}
+                if coin_choice is not None:
+                    body["coin_index"] = coin_choice
                 resp = requests.post(
                     f"{self._backend()}/matches/roll",
                     headers={"Authorization": f"Bearer {self._token()}"},
-                    json={"match_id": self.match_id},
+                    json=body,
                     timeout=8,
                     verify=False,
                 )
@@ -845,7 +1070,23 @@ class DiceGameScreen(Screen):
         threading.Thread(target=worker, daemon=True).start()
 
     # ---------- offline roll core ----------
-    def _apply_roll(self, roll: int):
+    def _auto_choose_coin(self, player_idx: int) -> int | None:
+        if player_idx >= len(self._positions):
+            return None
+        # Prefer coins that are not yet on the board so they can spawn on a 1
+        for cidx in range(2):
+            if player_idx < len(self._spawned_on_board) and not self._spawned_on_board[player_idx][cidx]:
+                return cidx
+        # Otherwise pick the first coin that hasn't reached the final box
+        for cidx in range(2):
+            try:
+                if self._positions[player_idx][cidx] < FINAL_BOX_INDEX:
+                    return cidx
+            except Exception:
+                continue
+        return None
+
+    def _apply_roll(self, roll: int, *, forced_coin_idx: int | None = None, player_idx: int | None = None):
         """
         Offline dice roll logic:
           - Spawn: roll 1 to bring the next coin onto box 0.
@@ -859,21 +1100,26 @@ class DiceGameScreen(Screen):
             self._debug("[SKIP] Online mode active — backend handles dice roll.")
             return
 
-        p = self._current_player
+        p = self._current_player if player_idx is None else player_idx
+        if p is None:
+            return
         if self._coins_finished[p] >= COINS_TO_WIN:
             self._debug(f"[OFFLINE] Player {p} already locked all coins.")
             Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.4)
             return
 
-        # Find which coin to move: first unspawned coin, or first spawned coin
-        coin_idx = None
-        for cidx in range(2):
-            if not self._spawned_on_board[p][cidx]:
-                coin_idx = cidx
-                break
-        if coin_idx is None:
-            # All coins spawned, use first one (coin 0)
-            coin_idx = 0
+        coin_idx = forced_coin_idx if forced_coin_idx is not None else self._auto_choose_coin(p)
+        if coin_idx is None or coin_idx >= 2:
+            self._debug(f"[OFFLINE] Player {p} has no movable coins.")
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.4)
+            return
+
+        if self._positions[p][coin_idx] == FINAL_BOX_INDEX:
+            self._debug(f"[OFFLINE] Player {p} coin {coin_idx} already safe.")
+            if self._can_control_coin(p):
+                self._show_temp_popup("Coin already safe", duration=1.2)
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.4)
+            return
 
         old = self._positions[p][coin_idx] if self._spawned_on_board[p][coin_idx] else -1
         new_pos = old + roll if self._spawned_on_board[p][coin_idx] else -1
@@ -953,6 +1199,8 @@ class DiceGameScreen(Screen):
                     self._debug(
                         f"[CAPTURE] Player {p} coin {coin_idx} captures player {idx} coin {cidx} at box {new_pos} → player {idx} coin {cidx} back to 0")
                     self._positions[idx][cidx] = 0
+                    if idx < len(self._spawned_on_board) and cidx < len(self._spawned_on_board[idx]):
+                        self._spawned_on_board[idx][cidx] = True
                     self._move_coin_to_box(idx, cidx, 0)
 
         Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
@@ -965,6 +1213,8 @@ class DiceGameScreen(Screen):
         self._end_turn_pending = True
 
         self._roll_locked = False
+        self._pending_roll = None
+        self._clear_coin_selection()
         self._current_player = (self._current_player + 1) % self._num_players
         self._debug(f"[TURN] Switching → player {self._current_player}")
 
@@ -1249,21 +1499,30 @@ class DiceGameScreen(Screen):
     def _ensure_coin_widgets(self):
         layer = self._root_float()
 
+        def bind_coin(widget, player_idx, coin_idx):
+            if not widget:
+                return
+            widget.player_index = player_idx
+            widget.coin_index = coin_idx
+            if not getattr(widget, "_selection_bound", False):
+                widget.bind(on_release=partial(self._on_coin_pressed, player_idx, coin_idx))
+                widget._selection_bound = True
+
         def ensure(player_idx, coin_idx, src):
-            if player_idx >= len(self._coins):
+            if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
                 return
-            if coin_idx >= len(self._coins[player_idx]):
-                return
-            if self._coins[player_idx][coin_idx] is None:
-                self._coins[player_idx][coin_idx] = Image(source=src, size_hint=(None, None), opacity=1)
-                layer.add_widget(self._coins[player_idx][coin_idx])
-            elif self._coins[player_idx][coin_idx].parent is not layer:
+            coin = self._coins[player_idx][coin_idx]
+            if coin is None or not isinstance(coin, SelectableCoin):
+                coin = SelectableCoin(source=src, size_hint=(None, None), opacity=1)
+                self._coins[player_idx][coin_idx] = coin
+            bind_coin(coin, player_idx, coin_idx)
+            if coin.parent is not layer:
                 try:
-                    if self._coins[player_idx][coin_idx].parent:
-                        self._coins[player_idx][coin_idx].parent.remove_widget(self._coins[player_idx][coin_idx])
+                    if coin.parent:
+                        coin.parent.remove_widget(coin)
                 except Exception:
                     pass
-                layer.add_widget(self._coins[player_idx][coin_idx])
+                layer.add_widget(coin)
 
         # Create 2 coins for each player
         for player_idx in range(self._num_players):
@@ -1272,6 +1531,7 @@ class DiceGameScreen(Screen):
             ensure(player_idx, 1, src)  # Second coin
 
         self._bring_coins_to_front()
+        self._update_coin_selection_visuals()
 
     def _place_coins_near_portraits(self):
         """Place all coins near their player portraits. Both coins should be visible initially."""
@@ -1285,6 +1545,7 @@ class DiceGameScreen(Screen):
                         if player_idx < len(self._positions) and coin_idx < len(self._positions[player_idx]):
                             self._positions[player_idx][coin_idx] = -1
                         self._position_coin_near_portrait(player_idx, coin_idx)
+        self._update_coin_selection_visuals()
 
     def _clamp_to_bounds(self, pos, size):
         layer = self._root_float()
@@ -1311,6 +1572,21 @@ class DiceGameScreen(Screen):
         landing = Animation(center=(target_x, target_y), d=duration * 0.55, t="in_quad")
         (ascent + landing).start(coin)
 
+    def _stack_offset_for(self, player_idx: int, coin_idx: int, pos: int) -> tuple[float, float]:
+        offsets = {
+            0: (-dp(8), 0),
+            1: (dp(8), 0),
+        }
+        if player_idx >= len(self._positions):
+            return offsets.get(coin_idx, (0, 0))
+        other_idx = 1 - coin_idx
+        other_pos = None
+        if other_idx < len(self._positions[player_idx]):
+            other_pos = self._positions[player_idx][other_idx]
+        if other_pos == pos and pos >= 0:
+            return (0, 0)
+        return offsets.get(coin_idx, (0, 0))
+
     def _move_coin_to_box(self, player_idx: int, coin_idx: int, pos: int, reverse=False, stepwise=False,
                           start_pos=None):
         box = self.ids.get(f"box_{pos}")
@@ -1329,12 +1605,7 @@ class DiceGameScreen(Screen):
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
-        # Offset coins slightly when multiple coins on same box
-        offsets = {
-            0: (-dp(8), 0),
-            1: (dp(8), 0),
-        }
-        stack_x, stack_y = offsets.get(coin_idx, (0, 0))
+        stack_x, stack_y = self._stack_offset_for(player_idx, coin_idx, pos)
 
         if reverse:
             start_anchor = self.ids.get("box_0")
@@ -1371,12 +1642,7 @@ class DiceGameScreen(Screen):
         size_px = max(dp(34), min(dp(56), h * 0.9))
         if self._num_players == 3:
             size_px = min(size_px, dp(40))
-        # Offset coins slightly when multiple coins on same box
-        offsets = {
-            0: (-dp(8), 0),
-            1: (dp(8), 0),
-        }
-        stack_x, stack_y = offsets.get(coin_idx, (0, 0))
+        stack_x, stack_y = self._stack_offset_for(player_idx, coin_idx, pos)
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
@@ -1435,6 +1701,9 @@ class DiceGameScreen(Screen):
                         self._position_coin_near_portrait(player_idx, 0)
                     self._spawned_on_board[player_idx][1] = False
                     self._position_coin_near_portrait(player_idx, 1)
+
+        self._validate_selected_coin()
+        self._update_coin_selection_visuals()
 
     # ---------- ONLINE sync ----------
     def _start_online_sync(self):
@@ -1919,6 +2188,8 @@ class DiceGameScreen(Screen):
             # =====================================================================
             # 10. UNLOCK AND CONTINUE
             # =====================================================================
+            self._validate_selected_coin()
+            self._update_coin_selection_visuals()
             self._unlock_and_continue()
 
         except Exception as e:
@@ -1986,7 +2257,13 @@ class DiceGameScreen(Screen):
             except Exception as e:
                 self._debug(f"[BOT][DICE][ERR] {e}")
 
-            Clock.schedule_once(lambda dt: self._apply_roll(roll), 0.75)
+            forced_coin = self._auto_coin_for_roll(current, roll)
+            if forced_coin is None:
+                forced_coin = self._auto_choose_coin(current)
+            Clock.schedule_once(
+                lambda dt, idx=forced_coin, who=current: self._apply_roll(roll, forced_coin_idx=idx, player_idx=who),
+                0.75,
+            )
 
             def _clear_flag_and_check():
                 self._bot_rolling = False
@@ -2013,6 +2290,8 @@ class DiceGameScreen(Screen):
             self._cancel_turn_timer()
 
             self._debug(f"[TURN] Ready for next roll (player {self._current_player})")
+            if self._local_player_index() != self._current_player:
+                self._clear_coin_selection()
             self._highlight_turn()
 
             if self._online:
