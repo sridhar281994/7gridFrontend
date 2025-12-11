@@ -384,6 +384,48 @@ class DiceGameScreen(Screen):
             return None
         return None
 
+    def _has_unspawned_coin(self, player_idx: int) -> bool:
+        if player_idx >= len(self._spawned_on_board):
+            return False
+        return any(
+            (not self._spawned_on_board[player_idx][cidx])
+            for cidx in range(min(2, len(self._spawned_on_board[player_idx])))
+        )
+
+    def _movable_coins(self, player_idx: int) -> list[int]:
+        movable = []
+        if player_idx >= len(self._spawned_on_board):
+            return movable
+        for cidx in range(2):
+            try:
+                spawned = self._spawned_on_board[player_idx][cidx]
+                pos = self._positions[player_idx][cidx]
+            except Exception:
+                continue
+            if spawned and isinstance(pos, (int, float)) and 0 <= int(pos) < FINAL_BOX_INDEX:
+                movable.append(cidx)
+        return movable
+
+    def _needs_selection_for_roll(self, player_idx: int, roll: int) -> bool:
+        if roll == 1 and self._has_unspawned_coin(player_idx):
+            return False
+        return len(self._movable_coins(player_idx)) >= 2
+
+    def _auto_coin_for_roll(self, player_idx: int, roll: int) -> int | None:
+        if roll == 1 and self._has_unspawned_coin(player_idx):
+            for cidx in range(2):
+                try:
+                    if not self._spawned_on_board[player_idx][cidx]:
+                        return cidx
+                except Exception:
+                    continue
+        movable = self._movable_coins(player_idx)
+        if len(movable) == 1:
+            return movable[0]
+        if len(movable) == 0:
+            return self._auto_choose_coin(player_idx)
+        return None
+
     def _on_coin_pressed(self, player_idx, coin_idx, *_):
         if not self._game_active:
             return
@@ -880,13 +922,35 @@ class DiceGameScreen(Screen):
                 self._show_temp_popup("Not your turn!", duration=1.8)
                 return
 
+            player_idx = self._current_player
             self._mark_roll_start("offline_manual")
             roll = random.randint(1, 6)
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
-            self._pending_roll = {"player": self._current_player, "value": roll}
+
+            needs_selection = self._needs_selection_for_roll(player_idx, roll)
+            coin_choice = self._auto_coin_for_roll(player_idx, roll)
+
+            if not needs_selection:
+                if coin_choice is None:
+                    coin_choice = self._auto_choose_coin(player_idx)
+                self._debug(
+                    f"[OFFLINE] Auto-applying roll {roll} to player {player_idx} coin {coin_choice}"
+                )
+                Clock.schedule_once(
+                    lambda dt, idx=coin_choice: self._apply_roll(roll, forced_coin_idx=idx, player_idx=player_idx),
+                    0.75,
+                )
+                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
+                return
+
+            self._pending_roll = {"player": player_idx, "value": roll}
             self._debug(
-                f"[OFFLINE] Stored pending roll {roll} for player {self._current_player} awaiting coin selection"
+                f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
+            )
+            Clock.schedule_once(
+                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
+                0.8,
             )
             return
 
