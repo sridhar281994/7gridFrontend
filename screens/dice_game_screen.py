@@ -4,6 +4,7 @@ import random
 import requests
 import threading
 import time
+import uuid
 from functools import partial
 
 from kivy.uix.screenmanager import Screen
@@ -282,6 +283,90 @@ class DiceGameScreen(Screen):
         self._chat_messages = []
         self._chat_bubble = None
         self._chat_bubble_ev = None
+        self._chat_seen_ids = set()
+
+    # ---------- chat helpers ----------
+    def _player_name_for_index(self, idx: int | None) -> str:
+        if idx is None:
+            return "Player"
+        try:
+            i = int(idx)
+        except Exception:
+            return "Player"
+        if i == 0:
+            name = (self.player1_name or "").strip()
+        elif i == 1:
+            name = (self.player2_name or "").strip()
+        elif i == 2:
+            name = (self.player3_name or "").strip()
+        else:
+            name = ""
+        return name or f"Player {i + 1}"
+
+    def _chat_seen(self, msg_id: str | None) -> bool:
+        if not msg_id:
+            return False
+        if msg_id in self._chat_seen_ids:
+            return True
+        self._chat_seen_ids.add(msg_id)
+        # Prevent unbounded growth
+        if len(self._chat_seen_ids) > 256:
+            try:
+                self._chat_seen_ids = set(list(self._chat_seen_ids)[-128:])
+            except Exception:
+                self._chat_seen_ids = set()
+        return False
+
+    def _broadcast_chat(self, text: str, client_msg_id: str):
+        """Best-effort chat broadcast scoped to current match_id."""
+        if not self._online or not self.match_id or not self._token() or not self._backend():
+            return
+
+        payload = {
+            "type": "chat",
+            "match_id": self.match_id,
+            "text": text,
+            "client_msg_id": client_msg_id,
+            "sender_index": self._my_index,
+            "ts": time.time(),
+        }
+
+        # Prefer websocket when available (real-time + match-scoped).
+        try:
+            ws = getattr(self, "_ws", None)
+            sock = getattr(ws, "sock", None) if ws else None
+            if ws and sock and getattr(sock, "connected", False):
+                ws.send(json.dumps(payload))
+                return
+        except Exception:
+            pass
+
+        # Fallback: try HTTP endpoints (backend may support one of these).
+        def worker():
+            headers = {"Authorization": f"Bearer {self._token()}"}
+            base = self._backend()
+            for path in ("/matches/chat", "/matches/message", "/matches/chat/send"):
+                try:
+                    resp = requests.post(
+                        f"{base}{path}",
+                        headers=headers,
+                        json=payload,
+                        timeout=6,
+                        verify=False,
+                    )
+                    # consider 200/201/204 as success
+                    if resp.status_code in (200, 201, 204):
+                        return
+                    # stop early if auth is broken
+                    if resp.status_code in (401, 403):
+                        return
+                    # if endpoint doesn't exist, try next
+                    if resp.status_code == 404:
+                        continue
+                except Exception:
+                    continue
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -1418,8 +1503,12 @@ class DiceGameScreen(Screen):
             return
         if len(text) > MAX_CHAT_LEN:
             text = text[:MAX_CHAT_LEN]
-        self._append_chat_message(text)
-        self._show_chat_bubble(text)
+        client_msg_id = uuid.uuid4().hex
+        # Mark as seen so server echo doesn't duplicate.
+        self._chat_seen_ids.add(client_msg_id)
+        self._append_chat_message(text, sender_label="You")
+        self._show_chat_bubble(text, player_idx=self._my_index if self._online else 0)
+        self._broadcast_chat(text, client_msg_id)
         if field:
             field.text = ""
         scroll = self.ids.get("chat_scroll")
@@ -1442,7 +1531,7 @@ class DiceGameScreen(Screen):
         y = min(max(target[1], half_h + dp(4)), max(height - half_h - dp(4), half_h))
         return x, y
 
-    def _show_chat_bubble(self, message: str):
+    def _show_chat_bubble(self, message: str, player_idx: int | None = None):
         parent = self._chat_overlay()
         if not parent:
             return
@@ -1458,6 +1547,15 @@ class DiceGameScreen(Screen):
         bubble._sync_size()
 
         anchor = self.ids.get("p1_pic")
+        # Anchor bubble near the sender portrait when possible.
+        try:
+            anchor_idx = player_idx
+            if anchor_idx is None and hasattr(self, "_last_chat_anchor_idx"):
+                anchor_idx = getattr(self, "_last_chat_anchor_idx", None)
+            if anchor_idx is not None:
+                anchor = self.ids.get(f"p{int(anchor_idx) + 1}_pic") or anchor
+        except Exception:
+            pass
         if anchor:
             ax, ay = self._map_center_to_parent(parent, anchor)
         else:
@@ -1499,8 +1597,9 @@ class DiceGameScreen(Screen):
         anim.bind(on_complete=lambda *_: _finish())
         anim.start(bubble)
 
-    def _append_chat_message(self, text: str):
-        entry = f"You: {text}"
+    def _append_chat_message(self, text: str, sender_label: str = "You"):
+        label = (sender_label or "").strip()
+        entry = f"{label}: {text}" if label else text
         self._chat_messages.append(entry)
         self._chat_messages = self._chat_messages[-12:]
         self.chat_log = list(self._chat_messages)
@@ -1940,6 +2039,72 @@ class DiceGameScreen(Screen):
     def _on_server_event(self, payload: dict):
         try:
             self._maybe_update_my_index_from_payload(payload)
+
+            # =====================================================================
+            # CHAT EVENTS (real-time match lobby chat)
+            # =====================================================================
+            # Handle chat events without interfering with gameplay state updates.
+            if isinstance(payload, dict):
+                chat_events = []
+                # 1) Single chat message envelope
+                p_type = (payload.get("type") or payload.get("event") or payload.get("kind") or "").lower()
+                if p_type == "chat":
+                    chat_events.append(payload)
+                # 2) Nested chat payload
+                if payload.get("chat") is not None:
+                    chat_val = payload.get("chat")
+                    if isinstance(chat_val, dict):
+                        chat_events.append(chat_val)
+                    else:
+                        chat_events.append({"text": str(chat_val)})
+                # 3) Batch payload: list of messages
+                if isinstance(payload.get("chat_messages"), list):
+                    for item in payload.get("chat_messages") or []:
+                        if isinstance(item, dict):
+                            chat_events.append(item)
+                        else:
+                            chat_events.append({"text": str(item)})
+
+                handled_single = (p_type == "chat") and not payload.get("positions")
+                for ev in chat_events:
+                    if not isinstance(ev, dict):
+                        continue
+                    msg_id = (
+                        ev.get("client_msg_id")
+                        or ev.get("message_id")
+                        or ev.get("id")
+                        or None
+                    )
+                    if msg_id and self._chat_seen(msg_id):
+                        continue
+
+                    text = ev.get("text") or ev.get("message") or ev.get("payload")
+                    if not isinstance(text, str):
+                        continue
+                    text = text.strip()
+                    if not text:
+                        continue
+
+                    sender_idx = ev.get("sender_index")
+                    if sender_idx is None and p_type == "chat":
+                        sender_idx = ev.get("actor")
+                    try:
+                        sender_idx = int(sender_idx) if sender_idx is not None else None
+                    except Exception:
+                        sender_idx = None
+
+                    is_me = (self._my_index is not None and sender_idx is not None and int(sender_idx) == int(self._my_index))
+                    sender_label = "You" if is_me else (ev.get("sender") or self._player_name_for_index(sender_idx))
+                    self._append_chat_message(text, sender_label=str(sender_label))
+                    # Remember which portrait to anchor this bubble near.
+                    self._last_chat_anchor_idx = sender_idx
+                    self._show_chat_bubble(text)
+                    scroll = self.ids.get("chat_scroll")
+                    if scroll:
+                        Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+
+                if handled_single and chat_events:
+                    return
 
             # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
