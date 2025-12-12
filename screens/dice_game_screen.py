@@ -506,42 +506,13 @@ class DiceGameScreen(Screen):
         self._update_coin_selection_visuals()
 
     def _clear_finished_markers(self):
-        if not hasattr(self, "_finished_markers") or not self._finished_markers:
-            self._finished_markers = [[], [], []]
-            return
-        for bucket in self._finished_markers:
-            for marker in bucket:
-                try:
-                    if marker and marker.parent:
-                        marker.parent.remove_widget(marker)
-                except Exception:
-                    pass
+        # Deprecated: we no longer render extra "finished markers" because they
+        # create duplicate coin visuals on box_8.
         self._finished_markers = [[], [], []]
 
     def _add_finished_marker(self, player_idx: int):
-        if player_idx >= len(self._coins_finished):
-            return
-        layer = self._root_float()
-        box = self.ids.get(f"box_{FINAL_BOX_INDEX}")
-        if not layer or not box:
-            return
-        marker = Image(source=self._coin_texture(player_idx), size_hint=(None, None), opacity=1)
-        marker.size = (dp(30), dp(30))
-        bx, by = self._map_center_to_parent(layer, box)
-        slot = len(self._finished_markers[player_idx]) if self._finished_markers else 0
-        offsets = {
-            0: (-dp(14), dp(10)),
-            1: (dp(14), dp(10)),
-            2: (0, -dp(10)),
-        }
-        off_x, off_y = offsets.get(slot, (0, 0))
-        target = (bx + off_x, by + off_y)
-        safe_x, safe_y = self._clamp_to_bounds(target, marker.size)
-        marker.center = (safe_x, safe_y)
-        layer.add_widget(marker)
-        if len(self._finished_markers) <= player_idx:
-            self._finished_markers.extend([[] for _ in range(player_idx - len(self._finished_markers) + 1)])
-        self._finished_markers[player_idx].append(marker)
+        # Deprecated: do nothing (avoid duplicate coins at box_8).
+        return
 
     def _ready_next_coin(self, player_idx: int, coin_idx: int):
         """Reset a coin after it reaches the final box, preparing for next coin."""
@@ -948,10 +919,6 @@ class DiceGameScreen(Screen):
             self._debug(
                 f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
             )
-            Clock.schedule_once(
-                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
-                0.8,
-            )
             return
 
         # ONLINE
@@ -1161,7 +1128,6 @@ class DiceGameScreen(Screen):
             self._positions[p][coin_idx] = BOARD_MAX
             self._move_coin_to_box(p, coin_idx, BOARD_MAX)
             self._coins_finished[p] += 1
-            self._add_finished_marker(p)
             progress = self._coins_finished[p]
             self._debug(f"[PROGRESS] Player {p} locked coin {progress}/{COINS_TO_WIN}")
 
@@ -1574,19 +1540,49 @@ class DiceGameScreen(Screen):
         (ascent + landing).start(coin)
 
     def _stack_offset_for(self, player_idx: int, coin_idx: int, pos: int) -> tuple[float, float]:
-        offsets = {
-            0: (-dp(8), 0),
-            1: (dp(8), 0),
-        }
-        if player_idx >= len(self._positions):
-            return offsets.get(coin_idx, (0, 0))
-        other_idx = 1 - coin_idx
-        other_pos = None
-        if other_idx < len(self._positions[player_idx]):
-            other_pos = self._positions[player_idx][other_idx]
-        if other_pos == pos and pos >= 0:
-            return (0, 0)
+        # Legacy per-player stacking. Keep it simple and ALWAYS split the two
+        # coins so they don't overlap.
+        offsets = {0: (-dp(10), 0), 1: (dp(10), 0)}
         return offsets.get(coin_idx, (0, 0))
+
+    def _occupant_offset_for_box(self, pos: int, player_idx: int, coin_idx: int) -> tuple[float, float]:
+        """
+        Compute a deterministic offset so multiple coins in the same box are visible.
+        Works across ALL players (not just the two coins of one player).
+        """
+        if pos is None or pos < 0:
+            return (0, 0)
+
+        occupants = []
+        for p in range(min(self._num_players, len(self._positions))):
+            for c in range(2):
+                try:
+                    if self._spawned_on_board[p][c] and int(self._positions[p][c]) == int(pos):
+                        occupants.append((p, c))
+                except Exception:
+                    continue
+
+        if not occupants:
+            return (0, 0)
+
+        occupants.sort()
+        try:
+            idx = occupants.index((player_idx, coin_idx))
+        except ValueError:
+            idx = 0
+
+        # Up to 6 visible slots around the center.
+        slots = [
+            (-dp(12), dp(10)),
+            (dp(12), dp(10)),
+            (-dp(12), -dp(10)),
+            (dp(12), -dp(10)),
+            (0, dp(14)),
+            (0, -dp(14)),
+        ]
+        if len(occupants) == 1:
+            return (0, 0)
+        return slots[idx % len(slots)]
 
     def _move_coin_to_box(self, player_idx: int, coin_idx: int, pos: int, reverse=False, stepwise=False,
                           start_pos=None):
@@ -1606,7 +1602,7 @@ class DiceGameScreen(Screen):
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
-        stack_x, stack_y = self._stack_offset_for(player_idx, coin_idx, pos)
+        stack_x, stack_y = self._occupant_offset_for_box(pos, player_idx, coin_idx)
 
         if reverse:
             start_anchor = self.ids.get("box_0")
@@ -1628,8 +1624,18 @@ class DiceGameScreen(Screen):
                 return
 
         self._move_coin_to_box_direct(player_idx, coin_idx, pos)
+        self._reposition_all_coins_in_box(pos)
 
-    def _move_coin_to_box_direct(self, player_idx: int, coin_idx: int, pos: int, jump_height=dp(32), duration=0.55):
+    def _move_coin_to_box_direct(
+        self,
+        player_idx: int,
+        coin_idx: int,
+        pos: int,
+        jump_height=dp(32),
+        duration=0.55,
+        *,
+        animate: bool = True,
+    ):
         box = self.ids.get(f"box_{pos}")
         if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
             return
@@ -1643,16 +1649,31 @@ class DiceGameScreen(Screen):
         size_px = max(dp(34), min(dp(56), h * 0.9))
         if self._num_players == 3:
             size_px = min(size_px, dp(40))
-        stack_x, stack_y = self._stack_offset_for(player_idx, coin_idx, pos)
+        stack_x, stack_y = self._occupant_offset_for_box(pos, player_idx, coin_idx)
         coin.size = (size_px, size_px)
 
         layer = self._root_float()
         tx, ty = self._map_center_to_parent(layer, box)
         target = (tx + stack_x, ty + stack_y)
         safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
-        self._jump_coin_to(coin, (safe_x, safe_y), jump_height=jump_height, duration=duration)
+        if animate:
+            self._jump_coin_to(coin, (safe_x, safe_y), jump_height=jump_height, duration=duration)
+        else:
+            coin.center = (safe_x, safe_y)
         self._positions[player_idx][coin_idx] = pos
         self._debug(f"[MOVE] Player {player_idx} coin {coin_idx} now at {pos}")
+
+    def _reposition_all_coins_in_box(self, pos: int):
+        """After any move/capture, re-layout all coins sitting in this box."""
+        if pos is None or pos < 0:
+            return
+        for p in range(min(self._num_players, len(self._positions))):
+            for c in range(2):
+                try:
+                    if self._spawned_on_board[p][c] and int(self._positions[p][c]) == int(pos):
+                        self._move_coin_to_box_direct(p, c, int(pos), animate=False)
+                except Exception:
+                    continue
 
     def _animate_coin_path(self, player_idx: int, coin_idx: int, path, jump_height=dp(26), duration=0.22):
         if not path:
@@ -1665,6 +1686,7 @@ class DiceGameScreen(Screen):
                 return
             next_box = steps.pop(0)
             self._move_coin_to_box_direct(player_idx, coin_idx, next_box, jump_height=jump_height, duration=duration)
+            self._reposition_all_coins_in_box(next_box)
             if steps:
                 Clock.schedule_once(_step, duration * 1.05)
 
@@ -1705,6 +1727,9 @@ class DiceGameScreen(Screen):
 
         self._validate_selected_coin()
         self._update_coin_selection_visuals()
+        # Ensure all coins sharing a box are visible.
+        for pos in range(FINAL_BOX_INDEX + 1):
+            self._reposition_all_coins_in_box(pos)
 
     # ---------- ONLINE sync ----------
     def _start_online_sync(self):
