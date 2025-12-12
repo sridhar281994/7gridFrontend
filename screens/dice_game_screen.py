@@ -1161,7 +1161,7 @@ class DiceGameScreen(Screen):
             self._positions[p][coin_idx] = BOARD_MAX
             self._move_coin_to_box(p, coin_idx, BOARD_MAX)
             self._coins_finished[p] += 1
-            self._add_finished_marker(p)
+            # self._add_finished_marker(p)
             progress = self._coins_finished[p]
             self._debug(f"[PROGRESS] Player {p} locked coin {progress}/{COINS_TO_WIN}")
 
