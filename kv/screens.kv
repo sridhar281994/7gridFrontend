@@ -646,18 +646,6 @@
                     valign: "middle"
                     text_size: self.size
 
-                Button:
-                    id: invite_friend_btn
-                    text: "Ask friend to join"
-                    size_hint_y: None
-                    height: dp(44)
-                    font_size: "15sp"
-                    background_normal: ""
-                    background_down: ""
-                    background_color: (1.0, 0.78, 0.25, 1)
-                    color: (0.35, 0.18, 0.07, 1)
-                    on_release: root.open_invite_dialog()
-
                 TextInput:
                     id: name_input
                     hint_text: "Your Name"
@@ -733,6 +721,18 @@
                     background_color: (0.9,0.6,0.1,1)
                     color: (1,1,1,1)
                     on_release: root.show_wallet_history()
+
+                Button:
+                    id: invite_friend_btn
+                    text: "Ask friend to join"
+                    size_hint_y: None
+                    height: dp(44)
+                    font_size: "15sp"
+                    background_normal: ""
+                    background_down: ""
+                    background_color: (1.0, 0.78, 0.25, 1)
+                    color: (0.35, 0.18, 0.07, 1)
+                    on_release: root.open_invite_dialog()
 
                 Button:
                     text: "Save Settings"
