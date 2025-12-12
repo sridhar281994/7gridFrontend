@@ -1273,6 +1273,12 @@
                                 size: self.size
                         Image:
                             source: "assets/danger.png"
+                            canvas.after:
+                                Color:
+                                    rgba: 1, 1, 1, 0.65
+                                Rectangle:
+                                    pos: self.pos
+                                    size: self.size
 
                     Label:
                         id: box_4
