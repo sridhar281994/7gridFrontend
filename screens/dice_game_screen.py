@@ -1588,8 +1588,17 @@ class DiceGameScreen(Screen):
             return (0, 0)
         return offsets.get(coin_idx, (0, 0))
 
-    def _move_coin_to_box(self, player_idx: int, coin_idx: int, pos: int, reverse=False, stepwise=False,
-                          start_pos=None):
+    def _move_coin_to_box(
+        self,
+        player_idx: int,
+        coin_idx: int,
+        pos: int,
+        reverse=False,
+        stepwise=False,
+        start_pos=None,
+        *,
+        animate: bool = True,
+    ):
         box = self.ids.get(f"box_{pos}")
         if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
             return
@@ -1627,9 +1636,18 @@ class DiceGameScreen(Screen):
                 self._animate_coin_path(player_idx, coin_idx, path, jump_height=dp(26), duration=0.22)
                 return
 
-        self._move_coin_to_box_direct(player_idx, coin_idx, pos)
+        self._move_coin_to_box_direct(player_idx, coin_idx, pos, animate=animate)
 
-    def _move_coin_to_box_direct(self, player_idx: int, coin_idx: int, pos: int, jump_height=dp(32), duration=0.55):
+    def _move_coin_to_box_direct(
+        self,
+        player_idx: int,
+        coin_idx: int,
+        pos: int,
+        jump_height=dp(32),
+        duration=0.55,
+        *,
+        animate: bool = True,
+    ):
         box = self.ids.get(f"box_{pos}")
         if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
             return
@@ -1650,7 +1668,10 @@ class DiceGameScreen(Screen):
         tx, ty = self._map_center_to_parent(layer, box)
         target = (tx + stack_x, ty + stack_y)
         safe_x, safe_y = self._clamp_to_bounds(target, coin.size)
-        self._jump_coin_to(coin, (safe_x, safe_y), jump_height=jump_height, duration=duration)
+        if animate:
+            self._jump_coin_to(coin, (safe_x, safe_y), jump_height=jump_height, duration=duration)
+        else:
+            coin.center = (safe_x, safe_y)
         self._positions[player_idx][coin_idx] = pos
         self._debug(f"[MOVE] Player {player_idx} coin {coin_idx} now at {pos}")
 
@@ -1685,7 +1706,9 @@ class DiceGameScreen(Screen):
                         self._positions[player_idx][coin_idx] = int(pos_val[coin_idx])
                         if self._positions[player_idx][coin_idx] >= 0:
                             self._spawned_on_board[player_idx][coin_idx] = True
-                            self._move_coin_to_box(player_idx, coin_idx, int(pos_val[coin_idx]), reverse=False)
+                            self._move_coin_to_box(
+                                player_idx, coin_idx, int(pos_val[coin_idx]), reverse=False, animate=False
+                            )
                         else:
                             self._spawned_on_board[player_idx][coin_idx] = False
                             self._position_coin_near_portrait(player_idx, coin_idx)
@@ -1696,7 +1719,7 @@ class DiceGameScreen(Screen):
                     self._positions[player_idx][1] = -1
                     if pos >= 0:
                         self._spawned_on_board[player_idx][0] = True
-                        self._move_coin_to_box(player_idx, 0, pos, reverse=False)
+                        self._move_coin_to_box(player_idx, 0, pos, reverse=False, animate=False)
                     else:
                         self._spawned_on_board[player_idx][0] = False
                         self._position_coin_near_portrait(player_idx, 0)
