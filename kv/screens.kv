@@ -1,4 +1,5 @@
 #:import dp kivy.metrics.dp
+#:import sp kivy.metrics.sp
 <UserMatchRV@RecycleView>:
     viewclass: "Label"
 
@@ -310,7 +311,6 @@
                     id: phone_input
                     hint_text: "Enter registered phone"
                     input_filter: "int"
-                    max_text_length: 10
                     multiline: False
                     font_size: sp(18)
                     size_hint_y: None
@@ -536,7 +536,6 @@
                     id: phone_input
                     hint_text: "Phone (10 digits)"
                     input_filter: "int"
-                    max_text_length: 10
                     size_hint_y: None
                     height: dp(50)
                     font_size: "18sp"
@@ -605,12 +604,7 @@
             font_size: "16sp"
             on_release: app.root.current = "welcome"
 
-
-#:import dp kivy.metrics.dp
-
 <SettingsScreen>:
-    profile_image: root.profile_image
-
     FloatLayout:
         canvas.before:
             Color:
@@ -651,18 +645,6 @@
                     halign: "center"
                     valign: "middle"
                     text_size: self.size
-
-                Button:
-                    id: invite_friend_btn
-                    text: "Ask friend to join"
-                    size_hint_y: None
-                    height: dp(44)
-                    font_size: "15sp"
-                    background_normal: ""
-                    background_down: ""
-                    background_color: (1.0, 0.78, 0.25, 1)
-                    color: (0.35, 0.18, 0.07, 1)
-                    on_release: root.open_invite_dialog()
 
                 TextInput:
                     id: name_input
@@ -739,6 +721,18 @@
                     background_color: (0.9,0.6,0.1,1)
                     color: (1,1,1,1)
                     on_release: root.show_wallet_history()
+
+                Button:
+                    id: invite_friend_btn
+                    text: "Ask friend to join"
+                    size_hint_y: None
+                    height: dp(44)
+                    font_size: "15sp"
+                    background_normal: ""
+                    background_down: ""
+                    background_color: (1.0, 0.78, 0.25, 1)
+                    color: (0.35, 0.18, 0.07, 1)
+                    on_release: root.open_invite_dialog()
 
                 Button:
                     text: "Save Settings"
@@ -921,9 +915,6 @@
                     disabled: root.is_logging_out
                     on_release: root.logout_to_login()
 
-#:import dp kivy.metrics.dp
-#:import sp kivy.metrics.sp
-
 <UserMatchScreen>:
     name: "usermatch"
 
@@ -1045,7 +1036,6 @@
     size_hint: None, None
     size: dp(350), dp(220)
     auto_dismiss: False
-    screen: None
 
     BoxLayout:
         orientation: "vertical"
@@ -1070,19 +1060,18 @@
                 on_release:
                     print("[DEBUG] Yes pressed")
                     root.dismiss()
-                    root.screen._fallback_to_bots(root.screen.player1_name)
+                    (app.root.get_screen("usermatch")._fallback_to_bots(app.root.get_screen("usermatch").player1_name) if app.root and app.root.has_screen("usermatch") else None)
 
             Button:
                 text: "No"
                 on_release:
                     print("[DEBUG] No pressed")
                     root.dismiss()
-                    root.screen.manager.current = "stage"
-
-#:import dp kivy.metrics.dp
-#:import sp kivy.metrics.sp
+                    (setattr(app.root, "current", "stage") if app.root else None)
 
 <ButtonImage@ButtonBehavior+Image>:
+    allow_stretch: True
+    keep_ratio: True
 
 <DiceGameScreen>:
     name: "dicegame"

@@ -131,6 +131,7 @@ class SettingsScreen(WalletActionsMixin, Screen):
 
     def _stage_choices_for_mode(self, stakes, mode: int):
         choices = []
+        seen = set()
         for stake in stakes or []:
             try:
                 players = int(stake.get("players", 2))
@@ -144,6 +145,10 @@ class SettingsScreen(WalletActionsMixin, Screen):
             except Exception:
                 amount = 0
             label = stake.get("label") or f"₹{amount}"
+            dedupe_key = (mode, amount, (label or "").strip().lower())
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
             display = f"{label} • ₹{amount}"
             choices.append((display, {"amount": amount, "label": label, "players": mode}))
         return choices
