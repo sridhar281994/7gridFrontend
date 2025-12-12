@@ -178,17 +178,35 @@ class ChatBubble(Label):
         self.halign = "center"
         self.valign = "middle"
         self.padding = (dp(14), dp(10))
-        self.text_size = (None, None)
+        # self.text_size = (None, None) # Let _sync_size handle it
         with self.canvas.before:
             Color(1.0, 0.88, 0.70, 0.98)
             self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
         self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
 
     def _sync_size(self, *_):
-        width = min(dp(200), max(dp(90), self.texture_size[0] + dp(28)))
-        height = self.texture_size[1] + dp(20)
-        self.size = (width, height)
-        self.text_size = (width - dp(22), None)
+        max_w = dp(200)
+        # Check natural width first
+        self.text_size = (None, None)
+        self.texture_update()
+        
+        tw, th = self.texture_size
+        padding_x = dp(28)
+        padding_y = dp(20)
+
+        if tw + padding_x <= max_w:
+            # Fits in one line
+            width = max(dp(40), tw + padding_x)
+            height = th + padding_y
+            self.size = (width, height)
+            self.text_size = (None, None)
+        else:
+            # Needs wrapping
+            width = max_w
+            self.text_size = (width - padding_x, None)
+            self.texture_update()
+            height = self.texture_size[1] + padding_y
+            self.size = (width, height)
 
     def _update_rect(self, *_):
         if hasattr(self, "_rect") and self._rect is not None:
@@ -2238,9 +2256,25 @@ class DiceGameScreen(Screen):
             self._current_player = active[0]
             self._highlight_turn()
 
+        # Check if we should start a timer for this turn
+        should_start = False
         if self._online:
-            self._debug("[TIMER] Online auto-roll disabled — awaiting manual input.")
-            return
+             if self._current_player == self._my_index:
+                 should_start = True
+        else:
+             # Offline: Timer for real player (player 0)
+             if self._current_player == 0:
+                 should_start = True
+
+        if should_start:
+            self._debug(f"[TIMER] Starting 10s turn timer for player {self._current_player}")
+            self._turn_timer = Clock.schedule_once(lambda dt: self._auto_pass_turn(), 10)
+        elif self._online:
+            self._debug("[TIMER] Online - not my turn, waiting for opponent.")
+        else:
+            # Offline bot turn
+            # bots use _auto_roll_current triggered by highlight_turn usually
+            pass
 
         # offline players roll manually; bots use _auto_roll_current
 
@@ -2299,7 +2333,7 @@ class DiceGameScreen(Screen):
         Clock.schedule_once(do_roll, delay)
 
     def _auto_pass_turn(self):
-        if not self._online or not self._game_active:
+        if not self._game_active:
             return
 
         self._debug(f"[AUTO-TURN] 10s inactivity → passing turn from player {self._current_player}")

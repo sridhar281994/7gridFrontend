@@ -1478,15 +1478,18 @@
                         foreground_color: (0.35, 0.18, 0.07, 1)
                         padding: [dp(4), dp(2), dp(4), dp(2)]
                     Button:
-                        text: "Send"
-                        font_size: sp(11)
+                        text: ""
                         size_hint_x: None
                         width: dp(30)
                         background_normal: ""
                         background_down: ""
-                        background_color: (0.3, 0.65, 1, 1)
-                        color: (0.35, 0.18, 0.07, 1)
+                        background_color: 0, 0, 0, 0
                         on_release: root.send_chat_message()
+                        canvas.after:
+                            Color:
+                                rgba: 0.35, 0.18, 0.07, 1
+                            Triangle:
+                                points: [self.x + dp(6), self.y + dp(8), self.x + dp(6), self.top - dp(8), self.right - dp(4), self.center_y]
 
             Button:
                 id: chat_toggle
