@@ -1386,7 +1386,10 @@
                 ScrollView:
                     id: chat_scroll
                     size_hint_y: None
-                    height: dp(70)
+                    # Chat history removed (bubble popup is enough).
+                    height: dp(0)
+                    opacity: 0
+                    disabled: True
                     bar_width: 0
                     do_scroll_x: False
                     canvas.before:
@@ -1467,29 +1470,32 @@
                     height: dp(34)
                     spacing: dp(4)
                     padding: [dp(3), 0]
-                    TextInput:
-                        id: chat_input
-                        hint_text: "Type..."
-                        multiline: False
-                        font_size: sp(12)
-                        size_hint_x: None
-                        width: dp(62)
-                        background_color: (1, 1, 1, 0.92)
-                        foreground_color: (0.35, 0.18, 0.07, 1)
-                        padding: [dp(4), dp(2), dp(4), dp(2)]
-                    Button:
-                        text: ""
-                        size_hint_x: None
-                        width: dp(30)
-                        background_normal: ""
-                        background_down: ""
-                        background_color: 0, 0, 0, 0
-                        on_release: root.send_chat_message()
-                        canvas.after:
-                            Color:
-                                rgba: 0.35, 0.18, 0.07, 1
-                            Triangle:
-                                points: [self.x + dp(6), self.y + dp(8), self.x + dp(6), self.top - dp(8), self.right - dp(4), self.center_y]
+                    RelativeLayout:
+                        size_hint_x: 1
+                        TextInput:
+                            id: chat_input
+                            hint_text: "Type..."
+                            multiline: False
+                            font_size: sp(12)
+                            size_hint: 1, 1
+                            background_color: (1, 1, 1, 0.92)
+                            foreground_color: (0.35, 0.18, 0.07, 1)
+                            # Extra right padding so the send arrow fits inside.
+                            padding: [dp(8), dp(2), dp(34), dp(2)]
+                        Button:
+                            text: ""
+                            size_hint: None, None
+                            size: dp(30), dp(30)
+                            pos: self.parent.right - self.width - dp(2), self.parent.y + dp(2)
+                            background_normal: ""
+                            background_down: ""
+                            background_color: 0, 0, 0, 0
+                            on_release: root.send_chat_message()
+                            canvas.after:
+                                Color:
+                                    rgba: 0.35, 0.18, 0.07, 1
+                                Triangle:
+                                    points: [self.x + dp(6), self.y + dp(8), self.x + dp(6), self.top - dp(8), self.right - dp(4), self.center_y]
 
             Button:
                 id: chat_toggle

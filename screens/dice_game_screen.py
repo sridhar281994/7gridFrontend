@@ -123,7 +123,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 
 
 class SelectableCoin(ButtonBehavior, Image):
-    """Clickable coin widget that can toggle a subtle glow when selected."""
+    """Clickable coin widget (selection visuals disabled)."""
 
     player_index = NumericProperty(0)
     coin_index = NumericProperty(0)
@@ -134,22 +134,14 @@ class SelectableCoin(ButtonBehavior, Image):
         kwargs.setdefault("keep_ratio", True)
         super().__init__(**kwargs)
         self.color = (1, 1, 1, 1)
-        with self.canvas.after:
-            self._selection_color = Color(1.0, 0.8, 0.25, 0)
-            self._selection_ring = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(18)])
-        self.bind(pos=self._update_selection_ring, size=self._update_selection_ring)
+        # Offline mode removed the "selected" highlight; keep property for logic only.
 
     def _update_selection_ring(self, *_):
-        if not hasattr(self, "_selection_ring") or self._selection_ring is None:
-            return
-        pad = dp(4)
-        self._selection_ring.pos = (self.x - pad, self.y - pad)
-        self._selection_ring.size = (self.width + pad * 2, self.height + pad * 2)
+        return
 
     def on_selected(self, *_):
-        if hasattr(self, "_selection_color") and self._selection_color:
-            self._selection_color.a = 0.9 if self.selected else 0
-        self.color = (1, 0.92, 0.72, 1) if self.selected else (1, 1, 1, 1)
+        # Intentionally no UI highlight when selected.
+        self.color = (1, 1, 1, 1)
 
 
 # register for KV
@@ -272,7 +264,6 @@ class DiceGameScreen(Screen):
         self._last_roll_animated = None
         self._forfeited_players = set()
         self._first_turn_synced = False
-        self._auto_from_timer = False
         self._last_roll_time = 0
         self._server_turn = None
         self._heartbeat_evt = None
@@ -438,7 +429,8 @@ class DiceGameScreen(Screen):
             for coin_idx, coin in enumerate(player_coins):
                 if coin is None:
                     continue
-                coin.selected = (self._selected_coin == (player_idx, coin_idx))
+                # Selection visuals removed; force off.
+                coin.selected = False
 
     def _validate_selected_coin(self):
         if not self._selected_coin:
@@ -455,8 +447,6 @@ class DiceGameScreen(Screen):
 
     def _resolve_selected_coin_index(self, *, show_toast: bool = False):
         if not self._selected_coin:
-            if show_toast:
-                self._show_temp_popup("Select a coin to move", duration=1.5)
             return None
         player_idx, coin_idx = self._selected_coin
         if player_idx != self._current_player:
@@ -827,7 +817,6 @@ class DiceGameScreen(Screen):
 
         # reset volatile flags for new sessions to avoid stale turn/lock state
         self._first_turn_synced = False
-        self._auto_from_timer = False
         self._roll_inflight = False
         self._roll_locked = False
         self._last_roll_time = 0
@@ -1010,7 +999,8 @@ class DiceGameScreen(Screen):
 
         selected_coin_idx = None
         if self._online and self._requires_local_selection():
-            selected_coin_idx = self._resolve_selected_coin_index(show_toast=True)
+            # Online selection is still supported (backend may need coin_index), but no popup.
+            selected_coin_idx = self._resolve_selected_coin_index(show_toast=False)
             if selected_coin_idx is None:
                 return
 
@@ -1051,10 +1041,6 @@ class DiceGameScreen(Screen):
             self._debug(
                 f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
             )
-            Clock.schedule_once(
-                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
-                0.8,
-            )
             return
 
         # ONLINE
@@ -1087,8 +1073,7 @@ class DiceGameScreen(Screen):
                 self._debug(f"[TURN][SYNC][ERR] {e}")
 
         if self._current_player != self._my_index:
-            if not getattr(self, "_auto_from_timer", False):
-                self._show_temp_popup("Not your turn!", duration=1.8)
+            self._show_temp_popup("Not your turn!", duration=1.8)
             return
 
         # final verification with backend to avoid stale turn state
@@ -1110,15 +1095,13 @@ class DiceGameScreen(Screen):
                     self._debug("[ROLL] Aborted — backend reports different turn.")
                     self._mark_roll_end()
                     self._set_dice_button_enabled(False)
-                    if not getattr(self, "_auto_from_timer", False):
-                        self._show_temp_popup("Not your turn!", duration=1.5)
+                    self._show_temp_popup("Not your turn!", duration=1.5)
                     return
         except Exception as e:
             self._debug(f"[ROLL][VERIFY][ERR] {e}")
             # fallback to previous state; continue rolling
 
-        source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
-        self._mark_roll_start(source)
+        self._mark_roll_start("online_manual")
 
         coin_choice = selected_coin_idx
 
@@ -1144,8 +1127,7 @@ class DiceGameScreen(Screen):
 
                 elif resp.status_code == 409:
                     self._debug("[TURN] Server rejected roll — not your turn.")
-                    if not getattr(self, "_auto_from_timer", False):
-                        self._show_temp_popup("Not your turn!", duration=1.5)
+                    self._show_temp_popup("Not your turn!", duration=1.5)
                     Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
                     Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
@@ -1167,8 +1149,6 @@ class DiceGameScreen(Screen):
             finally:
                 Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
                 Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0.1)
-                if getattr(self, "_auto_from_timer", False):
-                    Clock.schedule_once(lambda dt: setattr(self, "_auto_from_timer", False), 0)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1506,14 +1486,11 @@ class DiceGameScreen(Screen):
         client_msg_id = uuid.uuid4().hex
         # Mark as seen so server echo doesn't duplicate.
         self._chat_seen_ids.add(client_msg_id)
-        self._append_chat_message(text, sender_label="You")
+        # Chat history removed; show only a temporary bubble near sender.
         self._show_chat_bubble(text, player_idx=self._my_index if self._online else 0)
         self._broadcast_chat(text, client_msg_id)
         if field:
             field.text = ""
-        scroll = self.ids.get("chat_scroll")
-        if scroll:
-            Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
 
     def toggle_chat_dropdown(self):
         self.chat_open = not self.chat_open
@@ -1598,11 +1575,8 @@ class DiceGameScreen(Screen):
         anim.start(bubble)
 
     def _append_chat_message(self, text: str, sender_label: str = "You"):
-        label = (sender_label or "").strip()
-        entry = f"{label}: {text}" if label else text
-        self._chat_messages.append(entry)
-        self._chat_messages = self._chat_messages[-12:]
-        self.chat_log = list(self._chat_messages)
+        # Chat history removed (keep method for compatibility).
+        self.chat_log = []
 
     def _clear_chat_messages(self):
         self._chat_messages = []
@@ -2095,13 +2069,9 @@ class DiceGameScreen(Screen):
 
                     is_me = (self._my_index is not None and sender_idx is not None and int(sender_idx) == int(self._my_index))
                     sender_label = "You" if is_me else (ev.get("sender") or self._player_name_for_index(sender_idx))
-                    self._append_chat_message(text, sender_label=str(sender_label))
                     # Remember which portrait to anchor this bubble near.
                     self._last_chat_anchor_idx = sender_idx
-                    self._show_chat_bubble(text)
-                    scroll = self.ids.get("chat_scroll")
-                    if scroll:
-                        Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
+                    self._show_chat_bubble(text, player_idx=sender_idx)
 
                 if handled_single and chat_events:
                     return
@@ -2179,15 +2149,6 @@ class DiceGameScreen(Screen):
             forfeit_actor = payload.get("forfeit_actor")
 
             # =====================================================================
-            # 3. Duplicate filter
-            # =====================================================================
-            sig = (tuple(positions), int(roll or 0), int(turn or -1))
-            if getattr(self, "_last_state_sig", None) == sig:
-                self._debug("[SYNC] Duplicate state – ignored")
-                return
-            self._last_state_sig = sig
-
-            # =====================================================================
             # 4. Dice animation
             # =====================================================================
             if roll and "dice_button" in self.ids:
@@ -2197,9 +2158,9 @@ class DiceGameScreen(Screen):
                     pass
 
             # =====================================================================
-            # 5. Spawn handler
+            # 5. Spawn handler (only when server does NOT send positions)
             # =====================================================================
-            if spawn and actor is not None:
+            if spawn and actor is not None and "positions" not in payload:
                 actor_idx = int(actor)
                 # Find first unspawned coin for this player
                 coin_idx = None
@@ -2228,7 +2189,7 @@ class DiceGameScreen(Screen):
             # 6. Move handling
             # =====================================================================
             # Handle positions - can be flat or nested
-            old_positions = [list(p) for p in self._positions]  # Deep copy
+            # Normalize positions early (supports flat legacy + nested 2-coin format).
             parsed_positions = []
             for val in positions:
                 if isinstance(val, (list, tuple)) and len(val) >= 2:
@@ -2247,6 +2208,20 @@ class DiceGameScreen(Screen):
             while len(parsed_positions) < 3:
                 parsed_positions.append([-1, -1])
 
+            # =====================================================================
+            # 3. Duplicate filter (safe for nested positions)
+            # =====================================================================
+            try:
+                pos_sig = tuple((int(p[0]), int(p[1])) for p in parsed_positions[:3])
+            except Exception:
+                pos_sig = tuple()
+            sig = (pos_sig, int(roll or 0), int(turn or -1), int(actor or -1))
+            if getattr(self, "_last_state_sig", None) == sig:
+                self._debug("[SYNC] Duplicate state – ignored")
+                return
+            self._last_state_sig = sig
+
+            old_positions = [list(p) for p in self._positions]  # Deep copy
             self._positions = parsed_positions[:3]  # Keep only first 3 players
             self._ensure_coin_widgets()
 
@@ -2404,7 +2379,7 @@ class DiceGameScreen(Screen):
 
     # ---------- Turn timer ----------
     def _start_turn_timer(self):
-        """Backend-verified 10s idle → auto-roll (online), or offline 10s auto-roll for player 0."""
+        """10s idle → pass highlight to next available player (no auto-roll)."""
         self._cancel_turn_timer()
 
         if not self._game_active:
@@ -2424,12 +2399,12 @@ class DiceGameScreen(Screen):
         # Check if we should start a timer for this turn
         should_start = False
         if self._online:
-             if self._current_player == self._my_index:
-                 should_start = True
+            # Online: always run the highlight-pass timer so turns don't stall visually.
+            should_start = self._current_player is not None and int(self._current_player) >= 0
         else:
-             # Offline: Timer for real player (player 0)
-             if self._current_player == 0:
-                 should_start = True
+            # Offline: Timer for real player (player 0)
+            if self._current_player == 0:
+                should_start = True
 
         if should_start:
             self._debug(f"[TIMER] Starting 10s turn timer for player {self._current_player}")
@@ -2502,8 +2477,27 @@ class DiceGameScreen(Screen):
             return
 
         self._debug(f"[AUTO-TURN] 10s inactivity → passing turn from player {self._current_player}")
-        self._current_player = (self._current_player + 1) % self._num_players
+        forfeited = getattr(self, "_forfeited_players", set())
+        active = [i for i in range(self._num_players) if i not in forfeited]
+        if not active:
+            self._game_active = False
+            return
+        try:
+            cur = int(self._current_player)
+        except Exception:
+            cur = active[0]
+        nxt = (cur + 1) % self._num_players
+        # Skip forfeited players.
+        for _ in range(self._num_players + 1):
+            if nxt in active:
+                break
+            nxt = (nxt + 1) % self._num_players
+        self._current_player = nxt
+        self._clear_coin_selection()
         self._highlight_turn()
+        # Best-effort resync so the UI converges back to backend state.
+        if self._online:
+            self._sync_remote_turn("idle-pass")
         self._start_turn_timer()
 
     def _unlock_and_continue(self):
@@ -2518,6 +2512,7 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
             if self._online:
+                self._start_turn_timer()
                 self._debug("[TURN] Online mode idle until player rolls manually.")
                 return
 
