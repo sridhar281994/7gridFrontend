@@ -925,7 +925,8 @@ class DiceGameScreen(Screen):
     def _resolve_index_from_ids(self, ids):
         if not storage or not isinstance(ids, (list, tuple)):
             return None
-        uid = (storage.get_user() or {}).get("id")
+        user = storage.get_user() or {}
+        uid = user.get("id") or user.get("_id")
         if uid is None:
             return None
         for idx, pid in enumerate(ids):
@@ -997,12 +998,15 @@ class DiceGameScreen(Screen):
         # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
         self._cancel_turn_timer()
 
+        # Online: coin selection is optional.
+        # If a coin was selected, pass its index; otherwise let the backend decide.
         selected_coin_idx = None
-        if self._online and self._requires_local_selection():
-            # Online selection is still supported (backend may need coin_index), but no popup.
+        if self._online and getattr(self, "_selected_coin", None) is not None:
             selected_coin_idx = self._resolve_selected_coin_index(show_toast=False)
             if selected_coin_idx is None:
-                return
+                # stale/invalid selection; do not block rolling
+                self._clear_coin_selection()
+                selected_coin_idx = None
 
         now = time.time()
         if hasattr(self, "_last_roll_time") and now - getattr(self, "_last_roll_time", 0) < 1.5:
@@ -1133,12 +1137,33 @@ class DiceGameScreen(Screen):
                     Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
                     return
 
-                elif resp.status_code == 400 and "Match not active" in resp.text:
-                    self._debug("[ROLL] Match not active — stopping game & timers.")
-                    self._game_active = False
-                    self._cancel_turn_timer()
-                    self._mark_roll_end()
-                    return
+                elif resp.status_code == 400:
+                    # Some backends require coin_index when multiple moves are possible.
+                    msg = ""
+                    try:
+                        j = resp.json() or {}
+                        if isinstance(j, dict):
+                            msg = j.get("message") or j.get("error") or ""
+                    except Exception:
+                        msg = resp.text or ""
+                    lower = (msg or "").lower()
+
+                    if "coin" in lower and "index" in lower:
+                        self._debug("[ROLL] Backend requires coin_index — waiting for selection.")
+                        self._show_temp_popup("Select a coin first", duration=1.6)
+                        Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
+                        Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
+                        Clock.schedule_once(lambda dt: self._sync_remote_turn("need-coin-index"), 0)
+                        return
+
+                    if "match not active" in lower:
+                        self._debug("[ROLL] Match not active — stopping game & timers.")
+                        self._game_active = False
+                        self._cancel_turn_timer()
+                        self._mark_roll_end()
+                        return
+
+                    self._debug(f"[ROLL][HTTP] 400: {msg or resp.text}")
 
                 else:
                     self._debug(f"[ROLL][HTTP] Unexpected {resp.status_code}: {resp.text}")
@@ -2138,15 +2163,41 @@ class DiceGameScreen(Screen):
             winner = payload.get("winner")
             positions = payload.get("positions") or self._positions
             roll = payload.get("last_roll")
+            if roll is None:
+                roll = payload.get("roll")
+
             actor = payload.get("actor")
+            if actor is None:
+                actor = payload.get("player") or payload.get("roller") or payload.get("rolled_by")
+
             turn = payload.get("turn")
+            if turn is None:
+                turn = payload.get("current_turn") or payload.get("next_turn")
+
+            # Normalize numeric fields early to avoid type errors ("1" vs 1).
+            try:
+                roll = int(roll) if roll is not None else None
+            except Exception:
+                roll = None
+            try:
+                actor = int(actor) if actor is not None else None
+            except Exception:
+                actor = None
+            try:
+                turn = int(turn) if turn is not None else None
+            except Exception:
+                turn = None
+
             if turn is not None:
-                try:
-                    self._server_turn = int(turn)
-                except Exception:
-                    pass
+                self._server_turn = int(turn)
             spawn = payload.get("spawn", False)
             forfeit_actor = payload.get("forfeit_actor")
+            if forfeit_actor is None:
+                forfeit_actor = payload.get("forfeited") or payload.get("forfeit")
+            try:
+                forfeit_actor = int(forfeit_actor) if forfeit_actor is not None else None
+            except Exception:
+                forfeit_actor = None
 
             # =====================================================================
             # 4. Dice animation
@@ -2358,7 +2409,10 @@ class DiceGameScreen(Screen):
             if turn is not None:
                 next_turn = int(turn)
             else:
-                next_turn = (actor + 1) % self._num_players
+                if actor is None:
+                    next_turn = active[0] if active else 0
+                else:
+                    next_turn = (int(actor) + 1) % self._num_players
 
             # If backend turn belongs to forfeited → fix it
             if next_turn not in active:
