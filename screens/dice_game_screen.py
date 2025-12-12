@@ -171,7 +171,7 @@ class ChatBubble(Label):
 
     def __init__(self, **kwargs):
         kwargs.setdefault("markup", False)
-        kwargs.setdefault("color", (1, 1, 1, 1))
+        kwargs.setdefault("color", (0.35, 0.18, 0.07, 1))
         kwargs.setdefault("font_size", dp(13))
         super().__init__(**kwargs)
         self.size_hint = (None, None)
@@ -180,7 +180,7 @@ class ChatBubble(Label):
         self.padding = (dp(14), dp(10))
         self.text_size = (None, None)
         with self.canvas.before:
-            Color(0.98, 0.58, 0.18, 0.92)
+            Color(1.0, 0.88, 0.70, 0.98)
             self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
         self.bind(pos=self._update_rect, size=self._update_rect, texture_size=self._sync_size)
 
@@ -1168,12 +1168,9 @@ class DiceGameScreen(Screen):
             if self._coins_finished[p] >= COINS_TO_WIN:
                 self._declare_winner(p)
                 return
-
-            def prep_next(*_):
-                self._ready_next_coin(p, coin_idx)
-                self._end_turn_and_highlight()
-
-            Clock.schedule_once(prep_next, 0.9)
+            # Keep the finished coin on box_8 (safe). Next rolls can be used to
+            # spawn/move the remaining coin(s).
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.9)
             return
 
         # --- Rule 4: Overshoot (>FINAL_BOX) → stay on current box ---
@@ -1190,6 +1187,10 @@ class DiceGameScreen(Screen):
         self._debug(f"[MOVE] Player {p} coin {coin_idx} moved to box {new_pos}")
 
         # --- Rule 6: Capture — if land on opponent, send them to 0 ---
+        # Final box is a safe zone: do not capture coins sitting there.
+        if new_pos == FINAL_BOX_INDEX:
+            Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
+            return
         for idx in range(self._num_players):
             if idx == p:
                 continue
