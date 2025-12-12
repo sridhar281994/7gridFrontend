@@ -82,10 +82,6 @@ class StageScreen(Screen):
         if not backend or not stages_box:
             return
 
-        # Prevent duplicate UI rows from stale in-flight requests.
-        self._stakes_fetch_seq = getattr(self, "_stakes_fetch_seq", 0) + 1
-        fetch_seq = self._stakes_fetch_seq
-
         def clear_box():
             keep_title = []
             for child in list(stages_box.children):
@@ -106,7 +102,7 @@ class StageScreen(Screen):
                 if resp.status_code == 200:
                     stakes = resp.json()
                     Clock.schedule_once(
-                        lambda dt: self._populate_stages(stages_box, stakes, fetch_seq), 0
+                        lambda dt: self._populate_stages(stages_box, stakes), 0
                     )
             except Exception as e:
                 print(f"[ERR] Stakes fetch failed: {e}")
@@ -114,9 +110,7 @@ class StageScreen(Screen):
         clear_box()
         threading.Thread(target=worker, daemon=True).start()
 
-    def _populate_stages(self, stages_box, stakes, fetch_seq=None):
-        if fetch_seq is not None and fetch_seq != getattr(self, "_stakes_fetch_seq", None):
-            return
+    def _populate_stages(self, stages_box, stakes):
         self._stage_buttons = []
         btn_width = self._scale(220)
         btn_height = self._scale(50)
@@ -131,8 +125,6 @@ class StageScreen(Screen):
             except Exception:
                 pass
 
-        # Deduplicate stakes so the UI doesn't show repeated stages.
-        seen = set()
         for stake in stakes:
             players = int(stake.get("players", 2))
             if players != int(selected_mode):
@@ -140,14 +132,6 @@ class StageScreen(Screen):
 
             label = stake.get("label", f"₹{stake.get('stake_amount', 0)}")
             amount = stake.get("stake_amount", 0)
-            try:
-                amount_int = int(amount)
-            except Exception:
-                amount_int = 0
-            key = (players, amount_int, (label or "").strip().lower())
-            if key in seen:
-                continue
-            seen.add(key)
 
             btn = Button(
                 text=label,
