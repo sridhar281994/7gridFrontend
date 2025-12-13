@@ -191,12 +191,12 @@ class ChatBubble(Label):
         self.texture_update()
 
         tw, th = self.texture_size
-        padding_x = dp(28)
-        padding_y = dp(20)
+        padding_x = dp(20)
+        padding_y = dp(16)
 
         if tw + padding_x <= max_w:
             # Fits in one line
-            width = max(dp(40), tw + padding_x)
+            width = max(dp(30), tw + padding_x)
             height = th + padding_y
             self.size = (width, height)
             self.text_size = (None, None)
@@ -946,30 +946,23 @@ class DiceGameScreen(Screen):
             if "dice_button" in self.ids:
                 self.ids.dice_button.animate_spin(roll)
 
-            needs_selection = self._needs_selection_for_roll(player_idx, roll)
-            coin_choice = self._auto_coin_for_roll(player_idx, roll)
+            # Determine valid moves
+            can_spawn = (roll == 1) and self._has_unspawned_coin(player_idx)
+            movable_on_board = self._movable_coins(player_idx)
 
-            if not needs_selection:
-                if coin_choice is None:
-                    coin_choice = self._auto_choose_coin(player_idx)
-                self._debug(
-                    f"[OFFLINE] Auto-applying roll {roll} to player {player_idx} coin {coin_choice}"
-                )
-                Clock.schedule_once(
-                    lambda dt, idx=coin_choice: self._apply_roll(roll, forced_coin_idx=idx, player_idx=player_idx),
-                    0.75,
-                )
-                Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.95)
+            has_valid_moves = can_spawn or (len(movable_on_board) > 0)
+
+            if not has_valid_moves:
+                self._debug(f"[OFFLINE] No moves for roll {roll}")
+                Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 1.0)
                 return
 
+            # Has moves. Wait for user selection.
             self._pending_roll = {"player": player_idx, "value": roll}
             self._debug(
                 f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
             )
-            Clock.schedule_once(
-                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
-                0.8,
-            )
+            # No popup
             return
 
         # ONLINE
@@ -1167,6 +1160,8 @@ class DiceGameScreen(Screen):
 
             def do_reverse_reset(*_):
                 self._move_coin_to_box(p, coin_idx, 0, reverse=True)
+                self._positions[p][coin_idx] = 0
+                self._spawned_on_board[p][coin_idx] = True # Ensure it stays spawned
                 self._debug(f"[RESET] Player {p} coin {coin_idx} safely returned to start")
                 self._game_active = True
                 self._end_turn_and_highlight()
@@ -1217,10 +1212,10 @@ class DiceGameScreen(Screen):
                 if self._spawned_on_board[idx][cidx] and self._positions[idx][cidx] == new_pos:
                     self._debug(
                         f"[CAPTURE] Player {p} coin {coin_idx} captures player {idx} coin {cidx} at box {new_pos} → player {idx} coin {cidx} back to 0")
-                    self._positions[idx][cidx] = 0
-                    if idx < len(self._spawned_on_board) and cidx < len(self._spawned_on_board[idx]):
-                        self._spawned_on_board[idx][cidx] = True
-                    self._move_coin_to_box(idx, cidx, 0)
+                    # Capture means reset to home (unspawned) so they must roll 1 to re-enter
+                    self._positions[idx][cidx] = -1
+                    self._spawned_on_board[idx][cidx] = False
+                    self._move_coin_home(idx, cidx)
 
         Clock.schedule_once(lambda dt: self._end_turn_and_highlight(), 0.6)
 
