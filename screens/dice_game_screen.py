@@ -4,7 +4,6 @@ import random
 import requests
 import threading
 import time
-import uuid
 from functools import partial
 
 from kivy.uix.screenmanager import Screen
@@ -123,7 +122,7 @@ class PolygonDice(ButtonBehavior, RelativeLayout):
 
 
 class SelectableCoin(ButtonBehavior, Image):
-    """Clickable coin widget (selection visuals disabled)."""
+    """Clickable coin widget that can toggle a subtle glow when selected."""
 
     player_index = NumericProperty(0)
     coin_index = NumericProperty(0)
@@ -134,14 +133,22 @@ class SelectableCoin(ButtonBehavior, Image):
         kwargs.setdefault("keep_ratio", True)
         super().__init__(**kwargs)
         self.color = (1, 1, 1, 1)
-        # Offline mode removed the "selected" highlight; keep property for logic only.
+        with self.canvas.after:
+            self._selection_color = Color(1.0, 0.8, 0.25, 0)
+            self._selection_ring = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(18)])
+        self.bind(pos=self._update_selection_ring, size=self._update_selection_ring)
 
     def _update_selection_ring(self, *_):
-        return
+        if not hasattr(self, "_selection_ring") or self._selection_ring is None:
+            return
+        pad = dp(4)
+        self._selection_ring.pos = (self.x - pad, self.y - pad)
+        self._selection_ring.size = (self.width + pad * 2, self.height + pad * 2)
 
     def on_selected(self, *_):
-        # Intentionally no UI highlight when selected.
-        self.color = (1, 1, 1, 1)
+        if hasattr(self, "_selection_color") and self._selection_color:
+            self._selection_color.a = 0.9 if self.selected else 0
+        self.color = (1, 0.92, 0.72, 1) if self.selected else (1, 1, 1, 1)
 
 
 # register for KV
@@ -182,7 +189,7 @@ class ChatBubble(Label):
         # Check natural width first
         self.text_size = (None, None)
         self.texture_update()
-        
+
         tw, th = self.texture_size
         padding_x = dp(28)
         padding_y = dp(20)
@@ -264,6 +271,7 @@ class DiceGameScreen(Screen):
         self._last_roll_animated = None
         self._forfeited_players = set()
         self._first_turn_synced = False
+        self._auto_from_timer = False
         self._last_roll_time = 0
         self._server_turn = None
         self._heartbeat_evt = None
@@ -274,90 +282,6 @@ class DiceGameScreen(Screen):
         self._chat_messages = []
         self._chat_bubble = None
         self._chat_bubble_ev = None
-        self._chat_seen_ids = set()
-
-    # ---------- chat helpers ----------
-    def _player_name_for_index(self, idx: int | None) -> str:
-        if idx is None:
-            return "Player"
-        try:
-            i = int(idx)
-        except Exception:
-            return "Player"
-        if i == 0:
-            name = (self.player1_name or "").strip()
-        elif i == 1:
-            name = (self.player2_name or "").strip()
-        elif i == 2:
-            name = (self.player3_name or "").strip()
-        else:
-            name = ""
-        return name or f"Player {i + 1}"
-
-    def _chat_seen(self, msg_id: str | None) -> bool:
-        if not msg_id:
-            return False
-        if msg_id in self._chat_seen_ids:
-            return True
-        self._chat_seen_ids.add(msg_id)
-        # Prevent unbounded growth
-        if len(self._chat_seen_ids) > 256:
-            try:
-                self._chat_seen_ids = set(list(self._chat_seen_ids)[-128:])
-            except Exception:
-                self._chat_seen_ids = set()
-        return False
-
-    def _broadcast_chat(self, text: str, client_msg_id: str):
-        """Best-effort chat broadcast scoped to current match_id."""
-        if not self._online or not self.match_id or not self._token() or not self._backend():
-            return
-
-        payload = {
-            "type": "chat",
-            "match_id": self.match_id,
-            "text": text,
-            "client_msg_id": client_msg_id,
-            "sender_index": self._my_index,
-            "ts": time.time(),
-        }
-
-        # Prefer websocket when available (real-time + match-scoped).
-        try:
-            ws = getattr(self, "_ws", None)
-            sock = getattr(ws, "sock", None) if ws else None
-            if ws and sock and getattr(sock, "connected", False):
-                ws.send(json.dumps(payload))
-                return
-        except Exception:
-            pass
-
-        # Fallback: try HTTP endpoints (backend may support one of these).
-        def worker():
-            headers = {"Authorization": f"Bearer {self._token()}"}
-            base = self._backend()
-            for path in ("/matches/chat", "/matches/message", "/matches/chat/send"):
-                try:
-                    resp = requests.post(
-                        f"{base}{path}",
-                        headers=headers,
-                        json=payload,
-                        timeout=6,
-                        verify=False,
-                    )
-                    # consider 200/201/204 as success
-                    if resp.status_code in (200, 201, 204):
-                        return
-                    # stop early if auth is broken
-                    if resp.status_code in (401, 403):
-                        return
-                    # if endpoint doesn't exist, try next
-                    if resp.status_code == 404:
-                        continue
-                except Exception:
-                    continue
-
-        threading.Thread(target=worker, daemon=True).start()
 
     # ---------- helpers ----------
     def _root_float(self):
@@ -429,8 +353,7 @@ class DiceGameScreen(Screen):
             for coin_idx, coin in enumerate(player_coins):
                 if coin is None:
                     continue
-                # Selection visuals removed; force off.
-                coin.selected = False
+                coin.selected = (self._selected_coin == (player_idx, coin_idx))
 
     def _validate_selected_coin(self):
         if not self._selected_coin:
@@ -447,6 +370,8 @@ class DiceGameScreen(Screen):
 
     def _resolve_selected_coin_index(self, *, show_toast: bool = False):
         if not self._selected_coin:
+            if show_toast:
+                self._show_temp_popup("Select a coin to move", duration=1.5)
             return None
         player_idx, coin_idx = self._selected_coin
         if player_idx != self._current_player:
@@ -817,6 +742,7 @@ class DiceGameScreen(Screen):
 
         # reset volatile flags for new sessions to avoid stale turn/lock state
         self._first_turn_synced = False
+        self._auto_from_timer = False
         self._roll_inflight = False
         self._roll_locked = False
         self._last_roll_time = 0
@@ -925,8 +851,7 @@ class DiceGameScreen(Screen):
     def _resolve_index_from_ids(self, ids):
         if not storage or not isinstance(ids, (list, tuple)):
             return None
-        user = storage.get_user() or {}
-        uid = user.get("id") or user.get("_id")
+        uid = (storage.get_user() or {}).get("id")
         if uid is None:
             return None
         for idx, pid in enumerate(ids):
@@ -998,15 +923,11 @@ class DiceGameScreen(Screen):
         # cancel any pending auto-roll timer as soon as a roll is initiated manually/externally
         self._cancel_turn_timer()
 
-        # Online: coin selection is optional.
-        # If a coin was selected, pass its index; otherwise let the backend decide.
         selected_coin_idx = None
-        if self._online and getattr(self, "_selected_coin", None) is not None:
-            selected_coin_idx = self._resolve_selected_coin_index(show_toast=False)
+        if self._online and self._requires_local_selection():
+            selected_coin_idx = self._resolve_selected_coin_index(show_toast=True)
             if selected_coin_idx is None:
-                # stale/invalid selection; do not block rolling
-                self._clear_coin_selection()
-                selected_coin_idx = None
+                return
 
         now = time.time()
         if hasattr(self, "_last_roll_time") and now - getattr(self, "_last_roll_time", 0) < 1.5:
@@ -1045,6 +966,10 @@ class DiceGameScreen(Screen):
             self._debug(
                 f"[OFFLINE] Stored pending roll {roll} for player {player_idx} awaiting coin selection"
             )
+            Clock.schedule_once(
+                lambda dt: self._show_temp_popup("Tap a coin to move", duration=1.3),
+                0.8,
+            )
             return
 
         # ONLINE
@@ -1077,7 +1002,8 @@ class DiceGameScreen(Screen):
                 self._debug(f"[TURN][SYNC][ERR] {e}")
 
         if self._current_player != self._my_index:
-            self._show_temp_popup("Not your turn!", duration=1.8)
+            if not getattr(self, "_auto_from_timer", False):
+                self._show_temp_popup("Not your turn!", duration=1.8)
             return
 
         # final verification with backend to avoid stale turn state
@@ -1099,13 +1025,15 @@ class DiceGameScreen(Screen):
                     self._debug("[ROLL] Aborted — backend reports different turn.")
                     self._mark_roll_end()
                     self._set_dice_button_enabled(False)
-                    self._show_temp_popup("Not your turn!", duration=1.5)
+                    if not getattr(self, "_auto_from_timer", False):
+                        self._show_temp_popup("Not your turn!", duration=1.5)
                     return
         except Exception as e:
             self._debug(f"[ROLL][VERIFY][ERR] {e}")
             # fallback to previous state; continue rolling
 
-        self._mark_roll_start("online_manual")
+        source = "online_auto" if getattr(self, "_auto_from_timer", False) else "online_manual"
+        self._mark_roll_start(source)
 
         coin_choice = selected_coin_idx
 
@@ -1131,39 +1059,19 @@ class DiceGameScreen(Screen):
 
                 elif resp.status_code == 409:
                     self._debug("[TURN] Server rejected roll — not your turn.")
-                    self._show_temp_popup("Not your turn!", duration=1.5)
+                    if not getattr(self, "_auto_from_timer", False):
+                        self._show_temp_popup("Not your turn!", duration=1.5)
                     Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
                     Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
                     Clock.schedule_once(lambda dt: self._sync_remote_turn("409"), 0)
                     return
 
-                elif resp.status_code == 400:
-                    # Some backends require coin_index when multiple moves are possible.
-                    msg = ""
-                    try:
-                        j = resp.json() or {}
-                        if isinstance(j, dict):
-                            msg = j.get("message") or j.get("error") or ""
-                    except Exception:
-                        msg = resp.text or ""
-                    lower = (msg or "").lower()
-
-                    if "coin" in lower and "index" in lower:
-                        self._debug("[ROLL] Backend requires coin_index — waiting for selection.")
-                        self._show_temp_popup("Select a coin first", duration=1.6)
-                        Clock.schedule_once(lambda dt: self._mark_roll_end(), 0)
-                        Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0)
-                        Clock.schedule_once(lambda dt: self._sync_remote_turn("need-coin-index"), 0)
-                        return
-
-                    if "match not active" in lower:
-                        self._debug("[ROLL] Match not active — stopping game & timers.")
-                        self._game_active = False
-                        self._cancel_turn_timer()
-                        self._mark_roll_end()
-                        return
-
-                    self._debug(f"[ROLL][HTTP] 400: {msg or resp.text}")
+                elif resp.status_code == 400 and "Match not active" in resp.text:
+                    self._debug("[ROLL] Match not active — stopping game & timers.")
+                    self._game_active = False
+                    self._cancel_turn_timer()
+                    self._mark_roll_end()
+                    return
 
                 else:
                     self._debug(f"[ROLL][HTTP] Unexpected {resp.status_code}: {resp.text}")
@@ -1174,6 +1082,8 @@ class DiceGameScreen(Screen):
             finally:
                 Clock.schedule_once(lambda dt: self._mark_roll_end(), 0.1)
                 Clock.schedule_once(lambda dt: setattr(self, "_last_roll_time", 0), 0.1)
+                if getattr(self, "_auto_from_timer", False):
+                    Clock.schedule_once(lambda dt: setattr(self, "_auto_from_timer", False), 0)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1508,14 +1418,13 @@ class DiceGameScreen(Screen):
             return
         if len(text) > MAX_CHAT_LEN:
             text = text[:MAX_CHAT_LEN]
-        client_msg_id = uuid.uuid4().hex
-        # Mark as seen so server echo doesn't duplicate.
-        self._chat_seen_ids.add(client_msg_id)
-        # Chat history removed; show only a temporary bubble near sender.
-        self._show_chat_bubble(text, player_idx=self._my_index if self._online else 0)
-        self._broadcast_chat(text, client_msg_id)
+        self._append_chat_message(text)
+        self._show_chat_bubble(text)
         if field:
             field.text = ""
+        scroll = self.ids.get("chat_scroll")
+        if scroll:
+            Clock.schedule_once(lambda dt: setattr(scroll, "scroll_y", 0))
 
     def toggle_chat_dropdown(self):
         self.chat_open = not self.chat_open
@@ -1533,7 +1442,7 @@ class DiceGameScreen(Screen):
         y = min(max(target[1], half_h + dp(4)), max(height - half_h - dp(4), half_h))
         return x, y
 
-    def _show_chat_bubble(self, message: str, player_idx: int | None = None):
+    def _show_chat_bubble(self, message: str):
         parent = self._chat_overlay()
         if not parent:
             return
@@ -1549,15 +1458,6 @@ class DiceGameScreen(Screen):
         bubble._sync_size()
 
         anchor = self.ids.get("p1_pic")
-        # Anchor bubble near the sender portrait when possible.
-        try:
-            anchor_idx = player_idx
-            if anchor_idx is None and hasattr(self, "_last_chat_anchor_idx"):
-                anchor_idx = getattr(self, "_last_chat_anchor_idx", None)
-            if anchor_idx is not None:
-                anchor = self.ids.get(f"p{int(anchor_idx) + 1}_pic") or anchor
-        except Exception:
-            pass
         if anchor:
             ax, ay = self._map_center_to_parent(parent, anchor)
         else:
@@ -1599,9 +1499,11 @@ class DiceGameScreen(Screen):
         anim.bind(on_complete=lambda *_: _finish())
         anim.start(bubble)
 
-    def _append_chat_message(self, text: str, sender_label: str = "You"):
-        # Chat history removed (keep method for compatibility).
-        self.chat_log = []
+    def _append_chat_message(self, text: str):
+        entry = f"You: {text}"
+        self._chat_messages.append(entry)
+        self._chat_messages = self._chat_messages[-12:]
+        self.chat_log = list(self._chat_messages)
 
     def _clear_chat_messages(self):
         self._chat_messages = []
@@ -1705,15 +1607,15 @@ class DiceGameScreen(Screen):
         return offsets.get(coin_idx, (0, 0))
 
     def _move_coin_to_box(
-        self,
-        player_idx: int,
-        coin_idx: int,
-        pos: int,
-        reverse=False,
-        stepwise=False,
-        start_pos=None,
-        *,
-        animate: bool = True,
+            self,
+            player_idx: int,
+            coin_idx: int,
+            pos: int,
+            reverse=False,
+            stepwise=False,
+            start_pos=None,
+            *,
+            animate: bool = True,
     ):
         box = self.ids.get(f"box_{pos}")
         if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
@@ -1755,14 +1657,14 @@ class DiceGameScreen(Screen):
         self._move_coin_to_box_direct(player_idx, coin_idx, pos, animate=animate)
 
     def _move_coin_to_box_direct(
-        self,
-        player_idx: int,
-        coin_idx: int,
-        pos: int,
-        jump_height=dp(32),
-        duration=0.55,
-        *,
-        animate: bool = True,
+            self,
+            player_idx: int,
+            coin_idx: int,
+            pos: int,
+            jump_height=dp(32),
+            duration=0.55,
+            *,
+            animate: bool = True,
     ):
         box = self.ids.get(f"box_{pos}")
         if player_idx >= len(self._coins) or coin_idx >= len(self._coins[player_idx]):
@@ -2040,68 +1942,6 @@ class DiceGameScreen(Screen):
             self._maybe_update_my_index_from_payload(payload)
 
             # =====================================================================
-            # CHAT EVENTS (real-time match lobby chat)
-            # =====================================================================
-            # Handle chat events without interfering with gameplay state updates.
-            if isinstance(payload, dict):
-                chat_events = []
-                # 1) Single chat message envelope
-                p_type = (payload.get("type") or payload.get("event") or payload.get("kind") or "").lower()
-                if p_type == "chat":
-                    chat_events.append(payload)
-                # 2) Nested chat payload
-                if payload.get("chat") is not None:
-                    chat_val = payload.get("chat")
-                    if isinstance(chat_val, dict):
-                        chat_events.append(chat_val)
-                    else:
-                        chat_events.append({"text": str(chat_val)})
-                # 3) Batch payload: list of messages
-                if isinstance(payload.get("chat_messages"), list):
-                    for item in payload.get("chat_messages") or []:
-                        if isinstance(item, dict):
-                            chat_events.append(item)
-                        else:
-                            chat_events.append({"text": str(item)})
-
-                handled_single = (p_type == "chat") and not payload.get("positions")
-                for ev in chat_events:
-                    if not isinstance(ev, dict):
-                        continue
-                    msg_id = (
-                        ev.get("client_msg_id")
-                        or ev.get("message_id")
-                        or ev.get("id")
-                        or None
-                    )
-                    if msg_id and self._chat_seen(msg_id):
-                        continue
-
-                    text = ev.get("text") or ev.get("message") or ev.get("payload")
-                    if not isinstance(text, str):
-                        continue
-                    text = text.strip()
-                    if not text:
-                        continue
-
-                    sender_idx = ev.get("sender_index")
-                    if sender_idx is None and p_type == "chat":
-                        sender_idx = ev.get("actor")
-                    try:
-                        sender_idx = int(sender_idx) if sender_idx is not None else None
-                    except Exception:
-                        sender_idx = None
-
-                    is_me = (self._my_index is not None and sender_idx is not None and int(sender_idx) == int(self._my_index))
-                    sender_label = "You" if is_me else (ev.get("sender") or self._player_name_for_index(sender_idx))
-                    # Remember which portrait to anchor this bubble near.
-                    self._last_chat_anchor_idx = sender_idx
-                    self._show_chat_bubble(text, player_idx=sender_idx)
-
-                if handled_single and chat_events:
-                    return
-
-            # =====================================================================
             # 0. UNIVERSAL FINISH CATCH (works for WIN + FORFEIT)
             # =====================================================================
             if payload.get("finished") is True or payload.get("status") == "FINISHED":
@@ -2163,41 +2003,24 @@ class DiceGameScreen(Screen):
             winner = payload.get("winner")
             positions = payload.get("positions") or self._positions
             roll = payload.get("last_roll")
-            if roll is None:
-                roll = payload.get("roll")
-
             actor = payload.get("actor")
-            if actor is None:
-                actor = payload.get("player") or payload.get("roller") or payload.get("rolled_by")
-
             turn = payload.get("turn")
-            if turn is None:
-                turn = payload.get("current_turn") or payload.get("next_turn")
-
-            # Normalize numeric fields early to avoid type errors ("1" vs 1).
-            try:
-                roll = int(roll) if roll is not None else None
-            except Exception:
-                roll = None
-            try:
-                actor = int(actor) if actor is not None else None
-            except Exception:
-                actor = None
-            try:
-                turn = int(turn) if turn is not None else None
-            except Exception:
-                turn = None
-
             if turn is not None:
-                self._server_turn = int(turn)
+                try:
+                    self._server_turn = int(turn)
+                except Exception:
+                    pass
             spawn = payload.get("spawn", False)
             forfeit_actor = payload.get("forfeit_actor")
-            if forfeit_actor is None:
-                forfeit_actor = payload.get("forfeited") or payload.get("forfeit")
-            try:
-                forfeit_actor = int(forfeit_actor) if forfeit_actor is not None else None
-            except Exception:
-                forfeit_actor = None
+
+            # =====================================================================
+            # 3. Duplicate filter
+            # =====================================================================
+            sig = (tuple(positions), int(roll or 0), int(turn or -1))
+            if getattr(self, "_last_state_sig", None) == sig:
+                self._debug("[SYNC] Duplicate state – ignored")
+                return
+            self._last_state_sig = sig
 
             # =====================================================================
             # 4. Dice animation
@@ -2209,9 +2032,9 @@ class DiceGameScreen(Screen):
                     pass
 
             # =====================================================================
-            # 5. Spawn handler (only when server does NOT send positions)
+            # 5. Spawn handler
             # =====================================================================
-            if spawn and actor is not None and "positions" not in payload:
+            if spawn and actor is not None:
                 actor_idx = int(actor)
                 # Find first unspawned coin for this player
                 coin_idx = None
@@ -2240,7 +2063,7 @@ class DiceGameScreen(Screen):
             # 6. Move handling
             # =====================================================================
             # Handle positions - can be flat or nested
-            # Normalize positions early (supports flat legacy + nested 2-coin format).
+            old_positions = [list(p) for p in self._positions]  # Deep copy
             parsed_positions = []
             for val in positions:
                 if isinstance(val, (list, tuple)) and len(val) >= 2:
@@ -2259,20 +2082,6 @@ class DiceGameScreen(Screen):
             while len(parsed_positions) < 3:
                 parsed_positions.append([-1, -1])
 
-            # =====================================================================
-            # 3. Duplicate filter (safe for nested positions)
-            # =====================================================================
-            try:
-                pos_sig = tuple((int(p[0]), int(p[1])) for p in parsed_positions[:3])
-            except Exception:
-                pos_sig = tuple()
-            sig = (pos_sig, int(roll or 0), int(turn or -1), int(actor or -1))
-            if getattr(self, "_last_state_sig", None) == sig:
-                self._debug("[SYNC] Duplicate state – ignored")
-                return
-            self._last_state_sig = sig
-
-            old_positions = [list(p) for p in self._positions]  # Deep copy
             self._positions = parsed_positions[:3]  # Keep only first 3 players
             self._ensure_coin_widgets()
 
@@ -2409,10 +2218,7 @@ class DiceGameScreen(Screen):
             if turn is not None:
                 next_turn = int(turn)
             else:
-                if actor is None:
-                    next_turn = active[0] if active else 0
-                else:
-                    next_turn = (int(actor) + 1) % self._num_players
+                next_turn = (actor + 1) % self._num_players
 
             # If backend turn belongs to forfeited → fix it
             if next_turn not in active:
@@ -2433,7 +2239,7 @@ class DiceGameScreen(Screen):
 
     # ---------- Turn timer ----------
     def _start_turn_timer(self):
-        """10s idle → pass highlight to next available player (no auto-roll)."""
+        """Backend-verified 10s idle → auto-roll (online), or offline 10s auto-roll for player 0."""
         self._cancel_turn_timer()
 
         if not self._game_active:
@@ -2453,8 +2259,8 @@ class DiceGameScreen(Screen):
         # Check if we should start a timer for this turn
         should_start = False
         if self._online:
-            # Online: always run the highlight-pass timer so turns don't stall visually.
-            should_start = self._current_player is not None and int(self._current_player) >= 0
+            if self._current_player == self._my_index:
+                should_start = True
         else:
             # Offline: Timer for real player (player 0)
             if self._current_player == 0:
@@ -2531,27 +2337,8 @@ class DiceGameScreen(Screen):
             return
 
         self._debug(f"[AUTO-TURN] 10s inactivity → passing turn from player {self._current_player}")
-        forfeited = getattr(self, "_forfeited_players", set())
-        active = [i for i in range(self._num_players) if i not in forfeited]
-        if not active:
-            self._game_active = False
-            return
-        try:
-            cur = int(self._current_player)
-        except Exception:
-            cur = active[0]
-        nxt = (cur + 1) % self._num_players
-        # Skip forfeited players.
-        for _ in range(self._num_players + 1):
-            if nxt in active:
-                break
-            nxt = (nxt + 1) % self._num_players
-        self._current_player = nxt
-        self._clear_coin_selection()
+        self._current_player = (self._current_player + 1) % self._num_players
         self._highlight_turn()
-        # Best-effort resync so the UI converges back to backend state.
-        if self._online:
-            self._sync_remote_turn("idle-pass")
         self._start_turn_timer()
 
     def _unlock_and_continue(self):
@@ -2566,7 +2353,6 @@ class DiceGameScreen(Screen):
             self._highlight_turn()
 
             if self._online:
-                self._start_turn_timer()
                 self._debug("[TURN] Online mode idle until player rolls manually.")
                 return
 
@@ -2651,4 +2437,3 @@ class DiceGameScreen(Screen):
     # ---------- deprecated animator ----------
     def _animate_diff(self, old_positions, new_positions, reverse=False, actor=None, roll=None, spawn=False):
         self._debug("[ANIM] Deprecated _animate_diff() called — using unified _on_server_event flow.")
-
